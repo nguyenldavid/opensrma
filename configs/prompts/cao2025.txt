@@ -1,0 +1,10 @@
+PASTE_THE_VERBATIM_CAO_2025_PROMPT_HERE
+
+This file must contain the exact zero-shot prompt published in
+Cao et al., Ann Intern Med 2025;178:389-401 (see its supplementary appendix).
+It is intentionally not reproduced here; paste it verbatim, keeping these
+placeholders where the paper inserts review/citation fields:
+{objective} {selection_criteria} {title} {abstract}
+The runner refuses to run the Cao condition while this notice is present.
+The parser inspects the final 500 characters of the answer for YYY
+(include/uncertain) versus XXX (exclude).

@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opensrbench"
+version = "1.1.0"
+description = "Open-SR-Bench: leak-audited benchmark and TITAN-Open decomposed cross-encoders for systematic-review title/abstract screening."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Open-SR-Bench contributors" }]
+dependencies = [
+  "numpy>=1.26",
+  "pandas>=2.1",
+  "pyarrow>=14",
+  "pyyaml>=6",
+  "requests>=2.31",
+  "lxml>=5",
+  "scikit-learn>=1.4",
+  "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+# Model training / inference (installed on Killarney GPU environments).
+train = [
+  "torch>=2.3",
+  "transformers>=4.51",
+  "tokenizers>=0.19",
+  "safetensors>=0.4",
+  "sentencepiece>=0.2",  # DeBERTa-v3 tokenizer.
+  "accelerate>=0.30",
+]
+# Decoder rerankers (Qwen3-Reranker) are fine-tuned with LoRA.
+lora = ["peft>=0.13"]
+# Async LLM sweep (OpenRouter / vLLM OpenAI-compatible endpoints).
+llm = ["httpx>=0.27"]
+# SWIFT (Howard et al. 2016) is distributed as .xlsx.
+xlsx = ["openpyxl>=3.1"]
+dev = ["pytest>=8", "pylint>=3", "pyink>=24", "isort>=5"]
+all = ["opensrbench[train,lora,llm,xlsx,dev]"]
+
+[project.scripts]
+osb = "opensrbench.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+opensrbench = ["py.typed"]
+
+[tool.pytest.ini_options]
+python_files = ["*_test.py"]
+testpaths = ["tests"]
+addopts = "-q"
+
+# Google Python Style Guide formatting (pyink = Google's fork of black).
+[tool.pyink]
+target-version = ["py311"]
+line-length = 80
+pyink-indentation = 4
+preview = true
+pyink-use-majority-quotes = true
+
+[tool.isort]
+profile = "google"
+line_length = 80
+
+[tool.pylint.format]
+max-line-length = 80
+indent-string = "    "
+
+[tool.pylint.messages_control]
+disable = ["too-many-arguments", "too-many-locals", "too-many-instance-attributes", "too-few-public-methods", "too-many-positional-arguments"]

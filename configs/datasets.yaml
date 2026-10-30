@@ -1,0 +1,82 @@
+# Open screening datasets ingested by `osb sources download` / `osb ingest`.
+#
+# Every source is public and downloaded automatically; no manual labelling is
+# needed anywhere in the pipeline. See DATASETS.md for provenance, licences,
+# label semantics and known caveats of each collection.
+#
+# role:
+#   train   -> legacy (pre-2025) data used for training / validation only.
+#   harvest -> automated Europe PMC harvest (post-cutoff benchmark + optional
+#              extra training reviews).
+# priority: when the same review (e.g. a Cochrane CD number) appears in
+#   several sources, the copy from the source with the *lowest* priority value
+#   is kept (richest labels / most complete pool first).
+
+sources:
+  clef_tar:
+    enabled: true
+    role: train
+    priority: 10
+    url: https://github.com/CLEF-TAR/tar.git
+    years: [2017, 2018, 2019]
+
+  chan2024:
+    enabled: true
+    role: train
+    priority: 20
+    # Chan, He, Leung & Verspoor (2024) Mendeley Data V1, CC BY 4.0.
+    url: https://data.mendeley.com/public-files/datasets/7sgmg89zb6/files/01afaec8-0fe2-4d51-ad65-2a1c8d73fb4d/file_downloaded
+    sha256: 1eed13c9a18cbefd36a5ea4ad2d761f4c77a99980a09e007e02a88c7bc09e14d
+    members:
+      - 20240827_dev_set.csv
+      - 20240827_val_set.csv
+      - 20240827_random_test_set.csv
+      - 20240827_heart_test_set.csv
+      - 20240827_HIV_test_set.csv
+
+  synergy:
+    enabled: true
+    role: train
+    priority: 30
+    url: https://github.com/asreview/synergy-dataset.git
+    biomedical_only: true          # Drops the software-engineering reviews.
+
+  cohen2006:
+    enabled: true
+    role: train
+    priority: 25
+    url: https://dmice.ohsu.edu/cohenaa/epc-ir-data/epc-ir.clean.tsv
+
+  swift2016:
+    enabled: true
+    role: train
+    priority: 40
+    urls:
+      ohat: https://static-content.springer.com/esm/art%3A10.1186%2Fs13643-016-0263-z/MediaObjects/13643_2016_263_MOESM1_ESM.xlsx
+      camarades: https://static-content.springer.com/esm/art%3A10.1186%2Fs13643-016-0263-z/MediaObjects/13643_2016_263_MOESM2_ESM.xlsx
+
+  sas2010:
+    enabled: true
+    role: train
+    priority: 45
+    url: https://github.com/bwallace/citation-screening.git
+
+  sigir2017:
+    enabled: true
+    role: train
+    priority: 50
+    url: https://github.com/ielab/SIGIR2017-SysRev-Collection.git
+
+  titan_sr:
+    enabled: true
+    role: train
+    priority: 60
+    # TITAN-SR reproducibility package (manifests CC BY 4.0): PMC + Track B
+    # labels, criteria and the stratified_split_v2 review-level split.
+    url: https://github.com/InvestmentMDideas/TITAN-SR.git
+    include_external_holdout: true   # 22 Cochrane reviews, title-only.
+
+  pmc_harvest:
+    enabled: true
+    role: harvest
+    priority: 5

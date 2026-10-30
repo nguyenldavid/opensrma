@@ -1,0 +1,170 @@
+# TITAN-Open ensemble configuration.
+#
+# Each backbone inherits `defaults` and overrides what it needs. An ensemble
+# is a list of backbones; every backbone is trained `n_folds` times on
+# family-grouped folds of the train split (the held-out fold drives early
+# stopping), so the validation split stays untouched for calibration.
+#
+#   osb plan-runs --ensemble titan_open      # prints backbone/fold pairs
+#   osb train --backbone modernbert_large --fold 0
+
+n_folds: 5
+fold_salt: titan-open-folds-v1
+holdout_fraction: 0.05            # Early-stopping holdout when n_folds == 1.
+
+defaults:
+  architecture: decomposed        # decomposed (criteria soft-min) | pooled
+  input_format: decomposed        # decomposed | titan_sr
+  max_seq_len: 512
+  budgets:                        # Token budgets per segment.
+    title: 64
+    objective: 80
+    criteria_total: 224
+    criterion_max: 48
+    max_criteria: 12
+  pooling: cls                    # cls (encoders) | last (decoders)
+  add_crit_token: true            # Adds a learned [CRIT] marker token.
+  softmin_temp: 4.0
+  head_dropout: 0.1
+  attn_implementation: sdpa
+  loss:
+    type: hybrid                  # hybrid | weighted_bce (TITAN-SR recipe)
+    gamma_pos: 0.5                # Asymmetric focal: mild on positives,
+    gamma_neg: 2.0                #   strong down-weighting of easy negatives.
+    abs_weight: 0.5               # Auxiliary abstract-stage head.
+    ft_excluded_policy: ignore    # Final head ignores abs=1/final=0 records.
+    rank_type: listwise           # listwise | pairwise | none
+    rank_weight: 0.5
+    margin: 1.0                   # Pairwise margin.
+    listwise_temp: 1.0
+    pos_weight: 1.0               # Only for weighted_bce.
+  sampler:
+    type: review_grouped          # review_grouped | class_balanced
+    group_size: 16                # Records per review group in a batch.
+    pos_per_group: 3
+    negatives_per_positive: 6
+    hard_negative_fraction: 0.5   # From top retrieval ranks + FT-excluded.
+    max_pos_per_review: 64        # Per epoch; stops huge reviews dominating.
+  optim:
+    lr: 2.0e-5
+    head_lr: 2.0e-4
+    weight_decay: 0.01
+    layer_decay: 0.9              # Layer-wise LR decay (LLRD).
+    warmup_ratio: 0.06
+    epochs: 3
+    batch_size_per_gpu: 32
+    grad_accum: 1
+    max_grad_norm: 1.0
+    ema_decay: 0.999              # 0 disables EMA.
+  gradient_checkpointing: false
+  precision: bf16
+  eval_negatives_per_review: 1000 # Holdout subsample for early stopping.
+  early_stopping_metric: spec_at_99_recall
+  num_workers: 6
+  seed: 1234
+
+backbones:
+  modernbert_large:
+    model_name: answerdotai/ModernBERT-large
+    max_seq_len: 1024
+    attn_implementation: flash_attention_2   # Falls back to sdpa if absent.
+    budgets: {title: 64, objective: 128, criteria_total: 448,
+              criterion_max: 64, max_criteria: 16}
+    optim: {lr: 3.0e-5, batch_size_per_gpu: 24}
+
+  biolinkbert_large:
+    model_name: michiyasunaga/BioLinkBERT-large
+    max_seq_len: 512
+
+  deberta_v3_large:
+    model_name: microsoft/deberta-v3-large
+    max_seq_len: 512
+    attn_implementation: eager    # DeBERTa has no SDPA/flash kernels.
+    optim: {lr: 1.0e-5, batch_size_per_gpu: 16, grad_accum: 2}
+
+  biomedbert_large:
+    model_name: microsoft/BiomedNLP-BiomedBERT-large-uncased-abstract
+    max_seq_len: 512
+
+  # Decoder cross-encoder (state-of-the-art reranker family), LoRA-tuned.
+  # Criteria markers are placed after each criterion and read with causal
+  # attention, so the document is put first (see modeling/inputs.py).
+  qwen3_reranker_4b:
+    model_name: Qwen/Qwen3-Reranker-4B
+    max_seq_len: 1536
+    pooling: last
+    add_crit_token: false
+    attn_implementation: flash_attention_2
+    gradient_checkpointing: true
+    budgets: {title: 96, objective: 160, criteria_total: 640,
+              criterion_max: 80, max_criteria: 16}
+    lora: {r: 32, alpha: 64, dropout: 0.05,
+           target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj,
+                            up_proj, down_proj]}
+    optim: {lr: 1.0e-4, head_lr: 3.0e-4, layer_decay: 1.0,
+            batch_size_per_gpu: 8, grad_accum: 4, ema_decay: 0.0}
+
+  # ------------------------------------------------------------------------
+  # Faithful re-implementation of the published TITAN-SR recipe (baseline):
+  # [CLS] criteria [SEP] "title. abstract" [SEP], 512 tokens, 10:1
+  # false-negative-weighted BCE, class-balanced sampler, AdamW 2e-5,
+  # effective batch 128, up to 10 epochs, early stopping on AUC.
+  # ------------------------------------------------------------------------
+  titan_sr_pubmedbert:
+    model_name: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext
+    architecture: pooled
+    input_format: titan_sr
+    add_crit_token: false
+    n_folds: 1
+    loss: {type: weighted_bce, pos_weight: 10.0}
+    sampler: {type: class_balanced}
+    optim: {lr: 2.0e-5, head_lr: 2.0e-5, layer_decay: 1.0, epochs: 10,
+            batch_size_per_gpu: 64, grad_accum: 2, ema_decay: 0.0,
+            warmup_ratio: 0.1}
+    early_stopping_metric: auc
+    patience: 3
+
+  titan_sr_biolinkbert:
+    model_name: michiyasunaga/BioLinkBERT-base
+    architecture: pooled
+    input_format: titan_sr
+    add_crit_token: false
+    n_folds: 1
+    loss: {type: weighted_bce, pos_weight: 10.0}
+    sampler: {type: class_balanced}
+    optim: {lr: 2.0e-5, head_lr: 2.0e-5, layer_decay: 1.0, epochs: 10,
+            batch_size_per_gpu: 64, grad_accum: 2, ema_decay: 0.0,
+            warmup_ratio: 0.1}
+    early_stopping_metric: auc
+    patience: 3
+
+  # Tiny randomly initialised model for `osb smoke` (CPU, seconds).
+  tiny:
+    model_name: __tiny_bert__
+    max_seq_len: 128
+    budgets: {title: 16, objective: 16, criteria_total: 48,
+              criterion_max: 16, max_criteria: 4}
+    n_folds: 2
+    optim: {epochs: 3, lr: 1.0e-3, head_lr: 1.0e-3, layer_decay: 1.0,
+            batch_size_per_gpu: 32, ema_decay: 0.0}
+    eval_negatives_per_review: 50
+    num_workers: 0
+
+ensembles:
+  # Protocol ensemble: 3 diverse encoders x 5 folds.
+  titan_open: [modernbert_large, biolinkbert_large, deberta_v3_large]
+  # Adds the LoRA decoder reranker (needs H100s).
+  titan_open_xl: [modernbert_large, biolinkbert_large, deberta_v3_large,
+                  qwen3_reranker_4b]
+  # TITAN-SR two-model 50/50 baseline (their reproducible variant).
+  titan_sr_baseline: [titan_sr_pubmedbert, titan_sr_biolinkbert]
+  smoke: [tiny]
+
+# How each ensemble's scores are combined before thresholds are locked.
+#   stacking:   review-conditional logistic stacker (TITAN-Open).
+#   mean_sigmoid: weighted mean of member sigmoids (TITAN-SR).
+combiners:
+  titan_open: stacking
+  titan_open_xl: stacking
+  titan_sr_baseline: mean_sigmoid
+  smoke: stacking

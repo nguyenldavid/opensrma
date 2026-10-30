@@ -1,0 +1,146 @@
+# Open-SR-Bench v1 — master configuration.
+#
+# Every stage of `osb` reads this file. Values of the form ${VAR} or
+# ${VAR:-default} are expanded from the environment, so the same file works
+# on a laptop and on Killarney (where OSB_DATA_ROOT should point at
+# /scratch/$USER/opensrbench or /project/<aip-group>/opensrbench).
+
+benchmark:
+  name: open-sr-bench-v1
+  salt: OPEN-SR-BENCH-V1          # SHA-256 salt for frozen tiers.
+  tiers: [10, 20, 40]             # Nested negative tiers T10/T20/T40.
+  primary_tier: 20
+  stability_salt: stability-v1    # Repeat-agreement subset hash suffix.
+  stability_fraction: 0.10
+
+paths:
+  data_root: ${OSB_DATA_ROOT:-datasets}
+  runs_root: ${OSB_RUNS_ROOT:-runs}
+  hf_home: ${HF_HOME:-}
+
+network:
+  ncbi_email: ${NCBI_EMAIL:-}
+  ncbi_api_key: ${NCBI_API_KEY:-}
+  # 10 req/s is NCBI's limit *with* an API key; it is lowered to 3 without.
+  ncbi_requests_per_second: 9
+  europepmc_requests_per_second: 8
+  efetch_batch_size: 200
+
+# ---------------------------------------------------------------------------
+# Temporal design. Training data may come from any year; the evaluation
+# benchmark is restricted to reviews published after frontier-model cut-offs.
+# ---------------------------------------------------------------------------
+temporal:
+  eval_window_start: "2025-01-01"
+  eval_window_end: "2026-10-31"
+  # Reviews published after the freeze go to the strictly prospective
+  # partition and are never trained, validated or tuned on.
+  freeze_date: "2026-10-31"
+  default_search_lag_days: 90     # t_r = pub_date - 90d when unreported.
+
+# ---------------------------------------------------------------------------
+# Europe PMC harvest of systematic reviews (eligibility criteria 1-5).
+# ---------------------------------------------------------------------------
+harvest:
+  # Harvest window for the *benchmark* (post-cutoff). Set
+  # harvest.train_window to also harvest older reviews as extra training data.
+  window_start: "2025-01-01"
+  window_end: "2026-10-31"
+  train_window: null              # e.g. ["2019-01-01", "2024-12-31"]
+  max_reviews: 50000
+  query: >-
+    (TITLE:"systematic review" OR TITLE:"meta-analysis" OR
+    TITLE:"meta analysis" OR TITLE:"scoping review" OR
+    TITLE:"umbrella review" OR TITLE:"rapid review" OR
+    TITLE:"evidence synthesis" OR TITLE:"meta-synthesis" OR
+    PUB_TYPE:"systematic-review")
+    AND OPEN_ACCESS:y AND HAS_FT:y AND SRC:MED
+  min_positives: 5
+  pool_min: 100
+  pool_max: 15000
+  # Benchmark eligibility also requires the reconstructed search to have
+  # retrieved at least this fraction of the review's included studies
+  # (search-sensitivity floor; reported in the cohort-flow figure).
+  min_pool_recall: 0.25
+
+# ---------------------------------------------------------------------------
+# Candidate pool reconstruction (Section 2.2).
+# ---------------------------------------------------------------------------
+cohort:
+  tier1_max_count: 15000          # Verbatim strategies retrieving more fail.
+  tier1_min_count: 50
+  esearch_cap: 9999               # PubMed ESearch hard limit per query.
+  k_min: 500                      # K_r bounds for hybrid top-K.
+  k_max: 5000
+  k_default: 2000                 # When PRISMA counts are unreported.
+  # Pool augmentation for legacy datasets whose negatives are only the cited
+  # references (TITAN-SR PMC/Track B, SIGIR 2017). Adds realistic, hard,
+  # date-bounded negatives so the model learns the real screening task.
+  augment_incomplete_pools: true
+  augment_k: 1000
+  augment_max_reviews: 25000     # Covers TITAN-SR + Chan + SIGIR (~20k).
+  query_generator: heuristic      # heuristic | llm (uses llm.query_endpoint)
+  dense:
+    enabled: true                 # MedCPT re-ranking (needs a GPU for speed).
+    query_encoder: ncbi/MedCPT-Query-Encoder
+    article_encoder: ncbi/MedCPT-Article-Encoder
+    batch_size: 64
+  rrf_k: 60                       # Reciprocal-rank-fusion constant.
+
+# ---------------------------------------------------------------------------
+# Families, splits and decontamination (Section 2.3).
+# ---------------------------------------------------------------------------
+splits:
+  overlap_threshold: 0.10         # |Pu ∩ Pv| / min(|Pu|, |Pv|)
+  cosine_threshold: 0.88          # Objective-embedding cosine similarity.
+  embedder: ncbi/MedCPT-Query-Encoder   # "tfidf" for a CPU-only fallback.
+  # Ratios for families that contain at least one eval-window review.
+  temporal_ratios: {train: 0.75, val: 0.10, eval: 0.15}
+  # Families made only of pre-window (legacy) reviews.
+  legacy_ratios: {train: 0.95, val: 0.05, eval: 0.0}
+  # Hold out TITAN-SR's own published test split as a secondary benchmark
+  # so we can compare head-to-head on their data as well as ours.
+  titan_sr_test_as_benchmark: true
+  # Purge train/val records matching any of these splits' fingerprints.
+  purge_against: [eval, prospective, titan_test]
+  purge_train_against_val: true
+  eval_families_per_type: 10
+  min_release_families: 50
+  min_release_appearances: 500
+
+# ---------------------------------------------------------------------------
+# Calibration and operating points (Section 3.3 / 5.4).
+# ---------------------------------------------------------------------------
+calibration:
+  target_sensitivities: [0.93, 0.95, 0.97, 0.99, 0.995]
+  # pooled_conformal: finite-sample split-conformal bound on a random
+  #   positive's miss rate (protocol default).
+  # equal_review: largest threshold whose equal-review validation
+  #   sensitivity meets the target (matches the primary endpoint).
+  # equal_review_lcb: as above but on the 5th percentile of a family
+  #   bootstrap (most conservative).
+  threshold_method: pooled_conformal
+  cross_fit_folds: 5
+  positive_class_weight: 5.0
+  meta_c: 1.0
+
+evaluation:
+  bootstrap_replicates: 5000
+  bootstrap_seed: 20261025
+  reference_system: titan_sr_baseline@tau99
+  alpha: 0.05
+
+# Optional LLM used for Tier-2 query synthesis when
+# cohort.query_generator = llm (e.g. gpt-oss-20b served by vLLM on Killarney).
+llm:
+  query_endpoint:
+    base_url: ${VLLM_BASE_URL:-http://localhost:8000/v1}
+    api_key_env: VLLM_API_KEY
+    model: openai/gpt-oss-20b
+    max_tokens: 1024
+    extra_body: {reasoning_effort: low}
+
+cascade:
+  low_threshold: tau99.5          # Below -> auto-exclude.
+  high_threshold: tau93           # Above -> auto-include.
+  verifier_system: gpt-oss-20b/condition_b
