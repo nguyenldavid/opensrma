@@ -4,6 +4,7 @@ Every PMID is fetched from NCBI at most once across all stages and sources.
 The store is resumable: an interrupted fetch keeps every committed batch.
 """
 
+from concurrent import futures
 import json
 import logging
 import os
@@ -87,6 +88,7 @@ class PubMedStore:
         client: "eutils.EUtilsClient",
         pmids: Iterable[str],
         batch_size: int = 200,
+        workers: int = 1,
     ) -> int:
         """Downloads every PMID not yet cached.
 
@@ -94,12 +96,16 @@ class PubMedStore:
           client: E-utilities client.
           pmids: PMIDs required downstream.
           batch_size: EFetch batch size.
+          workers: Concurrent EFetch requests. The client's session still
+            enforces the NCBI rate limit across threads; concurrency only
+            hides per-request latency. SQLite writes stay on this thread.
 
         Returns:
           Number of PMIDs requested from NCBI.
         """
         pmids = list(dict.fromkeys(str(p) for p in pmids if p))
-        todo = [p for p in pmids if p not in self.known(pmids)]
+        cached = self.known(pmids)
+        todo = [p for p in pmids if p not in cached]
         if not todo:
             return 0
         logging.info(
@@ -109,11 +115,18 @@ class PubMedStore:
             f"{len(pmids) - len(todo):,}",
         )
         bar = tqdm.tqdm(total=len(todo), unit="rec", desc="fetch")
-        for start in range(0, len(todo), batch_size):
-            batch = todo[start : start + batch_size]
-            records = next(client.efetch(batch, batch_size=len(batch)), [])
-            self.put_many(records, batch)
-            bar.update(len(batch))
+        batches = [
+            todo[start : start + batch_size]
+            for start in range(0, len(todo), batch_size)
+        ]
+
+        def fetch(batch: list[str]) -> list[dict]:
+            return next(client.efetch(batch, batch_size=len(batch)), [])
+
+        with futures.ThreadPoolExecutor(max(1, workers)) as pool:
+            for batch, records in zip(batches, pool.map(fetch, batches)):
+                self.put_many(records, batch)
+                bar.update(len(batch))
         bar.close()
         return len(todo)
 

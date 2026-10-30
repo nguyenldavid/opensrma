@@ -90,7 +90,12 @@ class RateLimitedSession:
                 error = requests.HTTPError(
                     f"HTTP {response.status_code} for {url}", response=response
                 )
-            except (requests.ConnectionError, requests.Timeout) as exc:
+            except (
+                requests.ConnectionError,
+                requests.Timeout,
+                # A body cut off mid-transfer (seen on long EFetch replies).
+                requests.exceptions.ChunkedEncodingError,
+            ) as exc:
                 error = exc
             attempt += 1
             if attempt > self._max_retries:

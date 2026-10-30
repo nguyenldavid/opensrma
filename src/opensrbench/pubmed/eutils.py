@@ -8,6 +8,8 @@ import datetime
 import logging
 from typing import Iterable, Iterator
 
+import requests
+
 from opensrbench.pubmed import parse
 from opensrbench.utils import dates
 from opensrbench.utils import http
@@ -184,22 +186,58 @@ class EUtilsClient:
     def pmcid_to_pmid(
         self, pmcids: Iterable[str], batch_size: int = 200
     ) -> dict[str, str]:
-        """Maps PMCIDs to PMIDs with the PMC ID Converter API."""
+        """Maps PMCIDs to PMIDs with the PMC ID Converter API.
+
+        The ID Converter sits behind a different front end from E-utilities
+        and can answer 403 to scripted clients; the remaining batches then
+        go through ESummary on the `pmc` database, which returns the same
+        PMCID -> PMID pairs.
+        """
         pmcids = list(dict.fromkeys(p for p in pmcids if p))
         mapping: dict[str, str] = {}
+        use_idconv = True
         for start in range(0, len(pmcids), batch_size):
-            params = dict(self._base)
-            params.pop("api_key", None)
-            params.update(
-                {
-                    "ids": ",".join(pmcids[start : start + batch_size]),
-                    "format": "json",
-                }
-            )
-            payload = self._session.get(IDCONV_URL, params=params).json()
-            for record in payload.get("records", []):
-                if record.get("pmid") and record.get("pmcid"):
-                    mapping[record["pmcid"]] = str(record["pmid"])
+            batch = pmcids[start : start + batch_size]
+            if use_idconv:
+                try:
+                    mapping.update(self._idconv(batch))
+                    continue
+                except requests.HTTPError as exc:
+                    if exc.response is None or exc.response.status_code != 403:
+                        raise
+                    logging.warning(
+                        "PMC ID Converter returned 403; using ESummary (pmc)."
+                    )
+                    use_idconv = False
+            mapping.update(self._esummary_pmc(batch))
+        return mapping
+
+    def _idconv(self, pmcids: list[str]) -> dict[str, str]:
+        params = dict(self._base)
+        params.pop("api_key", None)
+        params.update({"ids": ",".join(pmcids), "format": "json"})
+        payload = self._session.get(IDCONV_URL, params=params).json()
+        return {
+            record["pmcid"]: str(record["pmid"])
+            for record in payload.get("records", [])
+            if record.get("pmid") and record.get("pmcid")
+        }
+
+    def _esummary_pmc(self, pmcids: list[str]) -> dict[str, str]:
+        uids = [p.upper().removeprefix("PMC") for p in pmcids]
+        response = self._session.post(
+            BASE_URL + "esummary.fcgi",
+            data=self._params(db="pmc", id=",".join(uids), retmode="json"),
+        )
+        result = response.json().get("result", {})
+        mapping = {}
+        for uid in result.get("uids", []):
+            ids = {
+                a.get("idtype"): a.get("value")
+                for a in result.get(uid, {}).get("articleids", [])
+            }
+            if ids.get("pmid") and ids.get("pmcid"):
+                mapping[ids["pmcid"]] = str(ids["pmid"])
         return mapping
 
     def cochrane_to_pmid(self, cd_number: str) -> str | None:

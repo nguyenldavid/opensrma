@@ -25,6 +25,9 @@ network:
   ncbi_requests_per_second: 9
   europepmc_requests_per_second: 8
   efetch_batch_size: 200
+  # Concurrent EFetch requests (the session still enforces the rate limit;
+  # more workers only hide per-request latency).
+  efetch_workers: 1
 
 # ---------------------------------------------------------------------------
 # Temporal design. Training data may come from any year; the evaluation

@@ -230,13 +230,14 @@ def stage_enrich(ctx: Context) -> None:
         )
         io.write_parquet(known, doi_path)
     batch = int(ctx.cfg.get("network.efetch_batch_size", 200))
+    workers = int(ctx.cfg.get("network.efetch_workers", 1))
     with ctx.pubmed_store() as store:
         pmids = (
             list(frame["review_pmid"])
             + records["pmid"].dropna().tolist()
             + known["pmid"].dropna().tolist()
         )
-        store.fetch_missing(client, pmids, batch)
+        store.fetch_missing(client, pmids, batch, workers)
     unresolved = set(dois) - set(known.dropna()["doi"])
     oa_ids = (
         records.loc[
@@ -334,6 +335,7 @@ def stage_pools(ctx: Context) -> None:
     positives = records[records["label_final"] == 1]
     pos_by_review = positives.groupby("review_id")["pmid"].apply(list)
     batch = int(ctx.cfg.get("network.efetch_batch_size", 200))
+    workers = int(ctx.cfg.get("network.efetch_workers", 1))
     with ctx.pubmed_store() as store:
         for review in tqdm.tqdm(targets.to_dict("records"), desc="pools"):
             path = _pool_path(ctx.paths, review["review_id"])
@@ -368,7 +370,7 @@ def stage_pools(ctx: Context) -> None:
                 + candidates["strict_ids"]
                 + candidates["broad_ids"]
             )
-            store.fetch_missing(client, ids, batch)
+            store.fetch_missing(client, ids, batch, workers)
             io.write_json(candidates, path)
 
 
