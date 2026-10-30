@@ -1,0 +1,58 @@
+{
+  "combiner": "mean_sigmoid",
+  "ensemble": "titan_sr_baseline",
+  "members": [
+    "titan_sr_pubmedbert",
+    "titan_sr_biolinkbert"
+  ],
+  "n_val_positives": 3764,
+  "n_val_reviews": 282,
+  "threshold_method": "pooled_conformal",
+  "thresholds": {
+    "tau93": 0.6163990795612335,
+    "tau95": 0.5075213313102722,
+    "tau97": 0.35169159434735775,
+    "tau99": 0.14863378182053566,
+    "tau99.5": 0.05748815834522247,
+    "tauJ": 0.821502677675126
+  },
+  "validation": {
+    "tau93": {
+      "equal_review_sensitivity": 0.9176572856581602,
+      "equal_review_specificity": 0.682407022939042,
+      "pooled_sensitivity": 0.9303931987247609,
+      "tau": 0.6163990795612335
+    },
+    "tau95": {
+      "equal_review_sensitivity": 0.9396501931508907,
+      "equal_review_specificity": 0.6352302352035776,
+      "pooled_sensitivity": 0.9503188097768331,
+      "tau": 0.5075213313102722
+    },
+    "tau97": {
+      "equal_review_sensitivity": 0.9586500528136869,
+      "equal_review_specificity": 0.5677075792856268,
+      "pooled_sensitivity": 0.970510095642933,
+      "tau": 0.35169159434735775
+    },
+    "tau99": {
+      "equal_review_sensitivity": 0.9846849190100958,
+      "equal_review_specificity": 0.4583528336510862,
+      "pooled_sensitivity": 0.9904357066950054,
+      "tau": 0.14863378182053566
+    },
+    "tau99.5": {
+      "equal_review_sensitivity": 0.9897230366034321,
+      "equal_review_specificity": 0.36590821552771835,
+      "pooled_sensitivity": 0.9954835281615303,
+      "tau": 0.05748815834522247
+    },
+    "tauJ": {
+      "equal_review_sensitivity": 0.8627420575623597,
+      "equal_review_specificity": 0.76818529079157,
+      "pooled_sensitivity": 0.8695536663124336,
+      "tau": 0.821502677675126
+    }
+  },
+  "validation_predictions_sha256": "2a7489c21ff0b894cb45a5c07ae441ae4dad2b5bb29919db386f5ededf597af1"
+}

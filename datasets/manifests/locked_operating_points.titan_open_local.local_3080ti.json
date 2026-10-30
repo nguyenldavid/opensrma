@@ -1,0 +1,58 @@
+{
+  "combiner": "stacking",
+  "ensemble": "titan_open_local",
+  "members": [
+    "biolinkbert_large",
+    "modernbert_large"
+  ],
+  "n_val_positives": 3764,
+  "n_val_reviews": 282,
+  "threshold_method": "pooled_conformal",
+  "thresholds": {
+    "tau93": 0.48637924034582247,
+    "tau95": 0.3925714187824716,
+    "tau97": 0.3164170383569472,
+    "tau99": 0.16967152183032072,
+    "tau99.5": 0.08490257120976503,
+    "tauJ": 0.7192611544383443
+  },
+  "validation": {
+    "tau93": {
+      "equal_review_sensitivity": 0.9194061577581654,
+      "equal_review_specificity": 0.6593777760080307,
+      "pooled_sensitivity": 0.9303931987247609,
+      "tau": 0.48637924034582247
+    },
+    "tau95": {
+      "equal_review_sensitivity": 0.9360790882925957,
+      "equal_review_specificity": 0.598586267026773,
+      "pooled_sensitivity": 0.9503188097768331,
+      "tau": 0.3925714187824716
+    },
+    "tau97": {
+      "equal_review_sensitivity": 0.9617658478483178,
+      "equal_review_specificity": 0.5450840376824021,
+      "pooled_sensitivity": 0.970510095642933,
+      "tau": 0.3164170383569472
+    },
+    "tau99": {
+      "equal_review_sensitivity": 0.9870711879117279,
+      "equal_review_specificity": 0.41442609146323106,
+      "pooled_sensitivity": 0.9904357066950054,
+      "tau": 0.16967152183032072
+    },
+    "tau99.5": {
+      "equal_review_sensitivity": 0.9937727948540103,
+      "equal_review_specificity": 0.32668537642810286,
+      "pooled_sensitivity": 0.9954835281615303,
+      "tau": 0.08490257120976503
+    },
+    "tauJ": {
+      "equal_review_sensitivity": 0.8394015782264538,
+      "equal_review_specificity": 0.7937614498295948,
+      "pooled_sensitivity": 0.8560042507970245,
+      "tau": 0.7192611544383443
+    }
+  },
+  "validation_predictions_sha256": "3b47fbaadad6b35df6525effa76737c6d127161fd1cd4beec4efa74010d6d849"
+}

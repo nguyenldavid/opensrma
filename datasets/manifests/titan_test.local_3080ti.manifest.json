@@ -1,0 +1,38 @@
+{
+  "audit": {
+    "final_train_vs_protected": {
+      "abstract_fp_matches": 0,
+      "pmid_matches": 0,
+      "title_fp_matches": 0
+    },
+    "final_train_vs_val": {
+      "abstract_fp_matches": 0,
+      "pmid_matches": 0,
+      "title_fp_matches": 0
+    },
+    "purged_positives_vs_protected": 3892,
+    "purged_train_vs_val": 1109,
+    "purged_vs_protected": 35909
+  },
+  "salt": "OPEN-SR-BENCH-V1",
+  "tiers": {
+    "T10": {
+      "positives": 54511,
+      "records": 90186,
+      "reviews": 3635,
+      "sha256": "ee241790a515a30316efb9cd3f5189494c132e291f1211e420b2f054285f40f8"
+    },
+    "T20": {
+      "positives": 54511,
+      "records": 120779,
+      "reviews": 3635,
+      "sha256": "a97c1bf4a92c376a8d5c3530d8a567ca6baed2a470b38f4c65b7d7163f49bdb1"
+    },
+    "T40": {
+      "positives": 54511,
+      "records": 159276,
+      "reviews": 3635,
+      "sha256": "cf6d7fdaa31a983572bdafe23773817477a24a2f5ad7bc114afe5c3fbc9665ed"
+    }
+  }
+}
