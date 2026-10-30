@@ -25,8 +25,9 @@ echo "ensemble=$ENSEMBLE backbone=$BACKBONE fold=$FOLD gpus=$NGPU"
 RUN_DIR="$OSB_RUNS_ROOT/$BACKBONE/fold$FOLD"
 if [[ ! -f "$RUN_DIR/summary.json" ]]; then
   torchrun --standalone --nproc_per_node="$NGPU" -m opensrbench.cli train \
-    --backbone "$BACKBONE" --fold "$FOLD" ${TRAIN_ARGS:-}
+    --backbone "$BACKBONE" --fold "$FOLD" --hardware "${HARDWARE:-auto}" \
+    ${TRAIN_ARGS:-}
 fi
 torchrun --standalone --nproc_per_node="$NGPU" -m opensrbench.cli predict \
-  --backbone "$BACKBONE" --fold "$FOLD" \
-  --sets "${PREDICT_SETS:-val,open_sr_bench,titan_test,prospective}"
+  --backbone "$BACKBONE" --fold "$FOLD" --hardware "${HARDWARE:-auto}" \
+  --sets "${PREDICT_SETS:-val,internal_test,open_sr_bench,titan_test,prospective}"

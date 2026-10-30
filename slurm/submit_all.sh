@@ -25,7 +25,8 @@ TRAIN_JOBS=()
 for ENSEMBLE in $ENSEMBLES; do
   N=$(osb plan-runs --ensemble "$ENSEMBLE" | wc -l)
   JOB=$(ENSEMBLE="$ENSEMBLE" sbatch --parsable $DEP --array=0-$((N - 1)) \
-        --export=ALL,ENSEMBLE="$ENSEMBLE" "${TRAIN_RES[@]}" \
+        --export=ALL,ENSEMBLE="$ENSEMBLE",HARDWARE="killarney_$GPU" \
+        "${TRAIN_RES[@]}" \
         slurm/train_array.sbatch)
   echo "train $ENSEMBLE ($N runs): $JOB"
   TRAIN_JOBS+=("$JOB")

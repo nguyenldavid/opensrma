@@ -72,6 +72,13 @@ class ReviewGroupedBatchSampler:
         neg_per_pos = float(cfg.get("negatives_per_positive", 6))
         hard_frac = float(cfg.get("hard_negative_fraction", 0.5))
         max_pos = int(cfg.get("max_pos_per_review", 64))
+        if group_size > self.batch_size:
+            # Small GPUs: a group must fit in one micro-batch; keep the
+            # positive:negative mix of the configured group.
+            pos_per_group = max(
+                1, round(pos_per_group * self.batch_size / group_size)
+            )
+            group_size = self.batch_size
         groups: list[list[int]] = []
         for pos, neg, hard in self._reviews:
             pos = rng.permutation(pos)[:max_pos]

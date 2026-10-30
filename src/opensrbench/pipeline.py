@@ -7,6 +7,7 @@
                        SQLite caches.
   pools     [network]  Tier-1/Tier-2 candidate retrieval for reviews whose
                        pools are incomplete (harvested + legacy augmentation).
+  rct_corpus [network] MEDLINE publication-type corpus for the RCT classifier.
   build     [offline]  Merge sources, de-duplicate reviews, assemble pools
                        (BM25 + optional MedCPT on GPU), attach text, compute
                        fingerprints and criteria lists.
@@ -39,13 +40,23 @@ from opensrbench.sources import base
 from opensrbench.splits import assign
 from opensrbench.splits import decontam
 from opensrbench.splits import families as families_lib
+from opensrbench.splits import guards
 from opensrbench.splits import tiers as tiers_lib
 from opensrbench.text import criteria as criteria_lib
 from opensrbench.utils import hashing
 from opensrbench.utils import io
 
-STAGES = ("download", "ingest", "enrich", "pools", "build", "split", "freeze")
-NETWORK_STAGES = ("download", "enrich", "pools")
+STAGES = (
+    "download",
+    "ingest",
+    "enrich",
+    "pools",
+    "rct_corpus",
+    "build",
+    "split",
+    "freeze",
+)
+NETWORK_STAGES = ("download", "enrich", "pools", "rct_corpus")
 
 
 @dataclasses.dataclass
@@ -711,18 +722,49 @@ def stage_split(ctx: Context) -> None:
             "meets_release_floor": bool(release_ok),
         },
     }
+    # Independent re-check of the final artefacts (raises LeakageError).
+    report["guards"] = guards.verify_all(
+        reviews,
+        clean,
+        splits,
+        tuple(scfg["purge_against"]),
+        bool(scfg["purge_train_against_val"]),
+    )
     io.write_parquet(splits, os.path.join(ctx.paths.splits, "splits.parquet"))
     io.write_parquet(clean, os.path.join(ctx.paths.splits, "records.parquet"))
     io.write_json(report, os.path.join(ctx.paths.splits, "audit.json"))
     logging.info("split report: %s", json.dumps(report, default=str)[:2000])
 
 
+MODEL_RECORD_COLUMNS = [
+    "review_id",
+    "record_id",
+    "pmid",
+    "title",
+    "abstract",
+    "label_final",
+    "label_abs",
+    "retrieval_rank",
+    "publication_types",
+    "title_fp",
+    "abstract_fp",
+]
+
+
 def load_split_data(
-    paths: config.Paths,
+    paths: config.Paths, columns: list[str] | None = None
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Returns (reviews, decontaminated records, splits) for modelling."""
+    """Returns (reviews, decontaminated records, splits) for modelling.
+
+    Args:
+      paths: Data layout.
+      columns: Record columns to load (saves RAM on 32 GB workstations);
+        None loads everything.
+    """
     reviews = io.read_parquet(paths.processed_file("reviews"))
-    records = io.read_parquet(os.path.join(paths.splits, "records.parquet"))
+    records = io.read_parquet(
+        os.path.join(paths.splits, "records.parquet"), columns=columns
+    )
     splits = io.read_parquet(os.path.join(paths.splits, "splits.parquet"))
     return reviews, records, splits
 
@@ -738,6 +780,10 @@ def stage_freeze(ctx: Context) -> None:
         "open_sr_bench_extended": splits.loc[
             splits["split"] == "eval", "review_id"
         ],
+        # Review-level internal holdout (legacy families, all sources).
+        "internal_test": splits.loc[splits["split"] == "test", "review_id"],
+        # Development set (= calibration split; NOT a held-out estimate).
+        "val": splits.loc[splits["split"] == "val", "review_id"],
         "titan_test": splits.loc[splits["split"] == "titan_test", "review_id"],
         "prospective": splits.loc[
             splits["split"] == "prospective", "review_id"
@@ -785,11 +831,20 @@ def stage_freeze(ctx: Context) -> None:
         )
 
 
+def stage_rct_corpus(ctx: Context) -> None:
+    """Caches the MEDLINE publication-type corpus for the RCT classifier."""
+    from opensrbench.rct import \
+        run as rct_run  # pylint: disable=import-outside-toplevel
+
+    rct_run.cmd_corpus(ctx)
+
+
 _STAGE_FNS = {
     "download": stage_download,
     "ingest": stage_ingest,
     "enrich": stage_enrich,
     "pools": stage_pools,
+    "rct_corpus": stage_rct_corpus,
     "build": stage_build,
     "split": stage_split,
     "freeze": stage_freeze,

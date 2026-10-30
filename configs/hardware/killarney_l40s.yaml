@@ -1,0 +1,13 @@
+# Killarney standard node: 4 x NVIDIA L40S 48 GB (Ada, bf16, FlashAttention-2).
+name: killarney_l40s
+gpu_memory_gb: 48
+all:
+  auto_batch: true
+  num_workers: 6
+  eval_batch_size: 256
+backbones:
+  modernbert_large: {optim: {batch_size_per_gpu: 16}, eval_batch_size: 128}
+  deberta_v3_large: {optim: {batch_size_per_gpu: 8}, eval_batch_size: 128}
+  qwen3_reranker_4b: {base_dtype: bf16, optim: {batch_size_per_gpu: 2},
+                      eval_batch_size: 16}
+  qwen3_reranker_0_6b: {optim: {batch_size_per_gpu: 16}}

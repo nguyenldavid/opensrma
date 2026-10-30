@@ -1,0 +1,11 @@
+# CPU only (tests, smoke runs, debugging). Real backbones work but are slow.
+name: cpu
+gpu_memory_gb: 0
+all:
+  precision: fp32
+  gradient_checkpointing: false
+  auto_batch: false
+  num_workers: 0
+  eval_batch_size: 32
+backbones:
+  qwen3_reranker_4b: {unsupported: "CPU training of a 4B model is impractical"}

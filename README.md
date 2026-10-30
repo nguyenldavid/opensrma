@@ -24,6 +24,8 @@ end on the **Killarney** cluster (Vector Institute / PAICE).
 | [docs/PIPELINE.md](docs/PIPELINE.md) | Stage-by-stage reference, data schema, outputs, resumability |
 | [docs/METHODS.md](docs/METHODS.md) | Model, losses, calibration, statistics; why it beats TITAN-SR; ablations |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | Study protocol v1.1 (TRIPOD+AI / STARD-AI) with all amendments to v1.0 |
+| [docs/LOCAL_GPU.md](docs/LOCAL_GPU.md) | **Single workstation GPU** (RTX 3080 Ti 12 GB and up): profiles, one-command run |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Current status and **what still needs to be done** (prioritised) |
 | [CLAUDE.md](CLAUDE.md) | Team context, invariants and conventions for contributors and agents |
 
 ## Quick start
@@ -50,7 +52,16 @@ osb smoke            # synthetic end-to-end run of the offline pipeline (~1 min)
 python -m pytest -q  # unit tests + smoke test
 ```
 
-### 2. Killarney (full run)
+### 2. One workstation GPU (RTX 3080 Ti or better)
+
+```bash
+export NCBI_EMAIL=you@lab.org NCBI_API_KEY=xxxx OSB_HARDWARE=rtx3080ti
+bash scripts/run_local.sh      # data -> RCT classifier -> train -> calibrate -> dev report
+```
+
+See [docs/LOCAL_GPU.md](docs/LOCAL_GPU.md).
+
+### 3. Killarney (full run)
 
 ```bash
 ssh killarney.alliancecan.ca
@@ -95,7 +106,14 @@ Full details, resource choices (L40S vs H100) and troubleshooting:
 | `osb llm-sweep` | Budgeted async LLM screening (Conditions A/B, Cao) | CPU / GPU |
 | `osb cascade --ensemble E` | Two-stage encoder → LLM verifier cascade | CPU |
 | `osb evaluate --benchmark NAME` | IPW equal-review metrics, 5,000 family-bootstrap CIs, Holm | CPU |
+| `osb rct corpus\|train\|score\|systems` | Cochrane-recipe RCT classifier (leak-free), RCT filter baseline | CPU |
+| `osb audit` | Re-runs every leakage guard on the current splits | CPU |
+| `osb preregister` | Copies tier manifests + locked thresholds to `datasets/manifests/` | CPU |
+| `osb evaluate --benchmark val` | Development leaderboard (open) | CPU |
+| `osb evaluate --benchmark internal_test --unblind` | Held-out leaderboard (blinded; every call logged) | CPU |
 | `osb smoke` | Synthetic end-to-end run | anywhere |
+
+Training and prediction take `--hardware {auto,rtx3080ti,gpu_24gb,killarney_l40s,killarney_h100,cpu}`.
 
 Every command takes `--config` (default `configs/benchmark_v1.yaml`) and
 `--help`. Individual stages can be run with e.g.
@@ -109,13 +127,16 @@ configs/
   datasets.yaml            # which open datasets to ingest (+ priorities)
   titan_ensemble.yaml      # backbones, training recipes, ensembles, baseline
   llm_models.yaml          # endpoints, models, prices, budget
+  hardware/                # rtx3080ti, gpu_24gb, killarney_l40s, killarney_h100, cpu
+  benchmark_local.yaml     # workstation data profile (extends benchmark_v1.yaml)
   prompts/                 # Condition A / B / Cao (paste verbatim) templates
 src/opensrbench/
   sources/                 # one adapter per open dataset + Europe PMC harvest
   pubmed/                  # E-utilities client, XML parser, SQLite cache, OpenAlex
   harvest/                 # Europe PMC client + JATS parser
   cohort/                  # PICO query synthesis, BM25/MedCPT/RRF, pool rebuild
-  splits/                  # family graph, assignment, decontamination, tiers
+  splits/                  # family graph, assignment, decontamination, guards, tiers
+  rct/                     # Cochrane-recipe RCT classifier + leak-free corpus
   text/                    # criteria decomposition, review-type classifier
   modeling/                # inputs, model, losses, samplers, DDP train, predict
   calibration/             # stacking + conformal / equal-review thresholds
@@ -123,17 +144,34 @@ src/opensrbench/
   evaluation/              # IPW metrics, bootstrap, agreement, ranking, report
   pipeline.py cascade.py cli.py smoke.py doctor.py
 slurm/                     # env.sh, setup, prefetch, data, train array, eval, vLLM
+scripts/run_local.sh       # single-GPU end-to-end runner
 tests/                     # *_test.py (pytest), incl. end-to-end smoke test
 datasets/                  # default data root (generated content is git-ignored)
 docs/                      # Killarney guide, pipeline, methods, protocol
 ```
+
+## Splits and held-out sets (no leakage)
+
+| Split | What | Used for |
+|---|---|---|
+| `train` | families of legacy + post-cutoff reviews | fitting (5 family folds per backbone; held-out fold = early stopping) |
+| `val` | 5% legacy + 10% post-cutoff families | calibration / threshold locking; open development reports |
+| `test` | **15% of legacy families (review-level holdout, all sources)** | `internal_test` benchmark (blinded) |
+| `eval` | 15% of post-cutoff families | `open_sr_bench` (≤ 10 families per review type) + extended (blinded) |
+| `titan_test` | TITAN-SR's own test split + external holdout | head-to-head on their benchmark (blinded) |
+| `prospective` | published after the freeze | strictly prospective (blinded) |
+
+Families (overlapping included studies or near-duplicate objectives) are
+assigned atomically; train/val records sharing any PMID, title or abstract
+fingerprint with a protected split are purged, and the guards re-check this
+in `split`, before every training run and in `osb audit`.
 
 ## Status and honest caveats
 
 * The pipeline, model and statistics are implemented and tested (unit tests
   plus a synthetic end-to-end run); data stages were validated live against
   PubMed / Europe PMC on small slices. **No benchmark results are claimed
-  yet** — they require the full Killarney run.
+  yet**. What remains is tracked in [docs/ROADMAP.md](docs/ROADMAP.md).
 * Tier-2 pool reconstruction uses a topic-local candidate index (PubMed
   Boolean + broad recall query, re-ranked with BM25 + MedCPT) rather than a
   full local PubMed index; each pool's recall of the known included studies

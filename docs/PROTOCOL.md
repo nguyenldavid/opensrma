@@ -71,7 +71,8 @@ pub-date − 90 d), C_r = P_r ∪ N_r with PDAT ≤ t_r:
   cos(Embed(Obj_u), Embed(Obj_v)) ≥ 0.88 (MedCPT); positives matched by
   title fingerprint or PMID.
 * Connected components are assigned atomically: temporal families to
-  Train 75% / Val 10% / Eval 15%; legacy families to Train/Val; families
+  Train 75% / Val 10% / Eval 15%; legacy families to Train 80% / Val 5% /
+  Test 15% (review-level internal holdout, A19); families
   with prospective or TITAN-SR-test members to those partitions (A7).
 * Fingerprints: `pmid`, `title_fp = SHA256(norm(title))`,
   `abstract_fp = SHA256(norm(abstract)[:500])` (A2, A3). Train/val records
@@ -179,3 +180,8 @@ paywalled ones; TITAN-SR's external holdout is title-only.
 | A16 | Cao et al. prompt must be pasted verbatim; the runner refuses a placeholder | no paraphrased "exact" baselines |
 | A17 | Leakage audit raises `LeakageError` instead of `assert` | asserts vanish under `python -O` |
 | A18 | Pool augmentation for cited-reference sources (TITAN-SR, Chan, SIGIR) with title-fingerprint guards | realistic prevalence without label noise |
+| A19 | Review-level internal `test` holdout: 15% of legacy families (`internal_test`), purged/guarded like other protected splits | a held-out estimate on the legacy distribution independent of the post-cutoff harvest |
+| A20 | Guards re-run before every training run and in `osb audit` (family, review-key and record disjointness) | defence in depth against stale or edited artefacts |
+| A21 | Held-out evaluation requires `--unblind`; every look is logged with commit and threshold hashes; `osb preregister` | makes "leakage by iteration" auditable |
+| A22 | Cochrane-recipe RCT classifier (MEDLINE publication-type labels, decontaminated) as stacking features and as a standalone RCT-filter baseline | design classification is the dominant exclusion reason in RCT-only reviews |
+| A23 | Hardware profiles may change only batch/memory settings; effective batch preserved by accumulation | identical recipe on Killarney and a 12 GB workstation |

@@ -27,7 +27,9 @@ def _ratio_split(
 ) -> dict[str, str]:
     """Stratified, hash-ordered split of families by their primary type."""
     out = {}
-    names = [n for n in ("train", "val", "eval") if ratios.get(n, 0) > 0]
+    names = [
+        n for n in ("train", "val", "test", "eval") if ratios.get(n, 0) > 0
+    ]
     bounds = np.cumsum([ratios[n] for n in names])
     bounds = bounds / bounds[-1]
     for stratum, group in families.groupby("primary_type"):
@@ -149,3 +151,21 @@ def select_benchmark(
     return pd.Series(flag.values, index=df["review_id"]).reindex(
         reviews["review_id"], fill_value=False
     )
+
+
+def review_sets(splits: pd.DataFrame) -> dict[str, set[str]]:
+    """Named review-id sets used throughout calibration and evaluation."""
+    return {
+        "val": set(splits.loc[splits["split"] == "val", "review_id"]),
+        "open_sr_bench": set(splits.loc[splits["in_benchmark"], "review_id"]),
+        "eval": set(splits.loc[splits["split"] == "eval", "review_id"]),
+        "internal_test": set(
+            splits.loc[splits["split"] == "test", "review_id"]
+        ),
+        "titan_test": set(
+            splits.loc[splits["split"] == "titan_test", "review_id"]
+        ),
+        "prospective": set(
+            splits.loc[splits["split"] == "prospective", "review_id"]
+        ),
+    }

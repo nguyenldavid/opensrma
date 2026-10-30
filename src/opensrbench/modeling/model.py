@@ -103,6 +103,10 @@ def _load_backbone(spec: dict[str, Any], vocab_size: int) -> nn.Module:
         model = transformers.AutoModel.from_pretrained(name)
     # transformers >= 5 loads checkpoints in their stored dtype (often bf16).
     # Keep fp32 master weights; bf16 compute comes from autocast.
+    if spec.get("lora") and spec.get("base_dtype") == "bf16":
+        # Frozen LoRA base in bf16 halves its memory; adapters and heads
+        # stay fp32 (peft keeps adapter weights in fp32).
+        return model.to(torch.bfloat16)
     return model.float()
 
 
@@ -121,7 +125,13 @@ class TitanScreener(nn.Module):
                 weight = self.encoder.get_input_embeddings().weight
                 weight[old:] = weight[:old].mean(dim=0, keepdim=True)
         if spec.get("gradient_checkpointing"):
-            self.encoder.gradient_checkpointing_enable()
+            # Non-reentrant checkpointing works with frozen (LoRA) bases.
+            try:
+                self.encoder.gradient_checkpointing_enable(
+                    gradient_checkpointing_kwargs={"use_reentrant": False}
+                )
+            except TypeError:
+                self.encoder.gradient_checkpointing_enable()
         if spec.get("lora"):
             self.encoder = _apply_lora(self.encoder, spec["lora"])
         hidden = self.encoder.config.hidden_size
@@ -171,6 +181,9 @@ class TitanScreener(nn.Module):
         if self.use_token_types and token_type_ids is not None:
             kwargs["token_type_ids"] = token_type_ids
         hidden = self.encoder(**kwargs).last_hidden_state
+        if hidden.dtype != self.global_final_head.weight.dtype:
+            # bf16 LoRA base: heads are fp32 (autocast re-casts on GPU).
+            hidden = hidden.to(self.global_final_head.weight.dtype)
         pooled = self.dropout(self._pool(hidden, attention_mask))
         global_final = self.global_final_head(pooled).squeeze(-1).float()
         global_abs = self.global_abs_head(pooled).squeeze(-1).float()

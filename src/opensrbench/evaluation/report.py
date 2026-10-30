@@ -28,6 +28,7 @@ import pandas as pd
 
 from opensrbench import config
 from opensrbench.evaluation import bootstrap
+from opensrbench.evaluation import ledger
 from opensrbench.evaluation import metrics
 from opensrbench.evaluation import ranking
 from opensrbench.utils import io
@@ -187,9 +188,24 @@ def run(args: Any) -> dict[str, Any]:
     runs_root = args.runs_dir or paths.runs
     eval_cfg = bench_cfg.get("evaluation")
     tier = int(args.tier or bench_cfg.get("benchmark.primary_tier"))
+    ledger.require_unblind(
+        args.benchmark, bool(getattr(args, "unblind", False))
+    )
     benchmark_dir = os.path.join(paths.frozen, args.benchmark)
     patterns = args.systems or [os.path.join(runs_root, "systems", "*.parquet")]
     systems = _load_systems(patterns, args.benchmark)
+    if args.benchmark in ledger.PROTECTED_BENCHMARKS:
+        entry = ledger.record_unblinding(
+            runs_root, args.benchmark, tier, list(systems)
+        )
+        if not all(
+            v["preregistered"] for v in entry["locked_threshold_files"].values()
+        ):
+            logging.warning(
+                "UNBLINDING WITHOUT PRE-REGISTRATION: some locked threshold "
+                "files have no identical copy in datasets/manifests/. Run "
+                "`osb preregister` and commit before reporting results."
+            )
     reference = args.reference or eval_cfg.get("reference_system")
     result = evaluate(
         benchmark_dir,
@@ -206,6 +222,11 @@ def run(args: Any) -> dict[str, Any]:
     with open(
         os.path.join(out_dir, "leaderboard.md"), "w", encoding="utf-8"
     ) as fh:
+        if args.benchmark in ledger.DEV_BENCHMARKS:
+            fh.write(
+                "> DEV SET: thresholds were locked on these reviews; "
+                "this is not a held-out estimate.\n\n"
+            )
         fh.write(markdown_table(result))
     reviews = io.read_parquet(
         os.path.join(benchmark_dir, "review_totals.parquet")

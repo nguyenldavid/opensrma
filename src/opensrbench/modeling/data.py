@@ -18,6 +18,10 @@ _RECORD_COLS = [
     "label_final",
     "label_abs",
     "retrieval_rank",
+    # Kept so the training-time leakage guard can audit the exact frames.
+    "pmid",
+    "title_fp",
+    "abstract_fp",
 ]
 
 

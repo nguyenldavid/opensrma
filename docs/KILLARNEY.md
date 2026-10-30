@@ -99,7 +99,7 @@ WITH_LLM=1 bash slurm/submit_all.sh
 | data_offline | `slurm/data_offline.sbatch` | 1 × L40S, 16 CPU, 192 GB, 24 h | build (BM25 + MedCPT pools), split + **zero-leakage audit** (job fails on any leak), freeze tiers |
 | train (array) | `slurm/train_array.sbatch` | 4 × L40S per task | one task per (backbone, fold): DDP training then whole-cohort prediction |
 | llm_verifier | `slurm/llm_verifier.sbatch` | 1 × H100 | starts vLLM (gpt-oss-20b) on the node and runs Conditions A/B on T20 |
-| calibrate_eval | `slurm/calibrate_eval.sbatch` | CPU, 128 GB | stacking + threshold locking per ensemble, cascade, leaderboards |
+| calibrate_eval | `slurm/calibrate_eval.sbatch` | CPU, 128 GB | stacking + threshold locking per ensemble (with and without RCT features), cascade, **dev** leaderboard on `val`; held-out benchmarks only with `UNBLIND=1` |
 
 Variants:
 
@@ -154,9 +154,20 @@ $OSB_RUNS_ROOT/reports/<benchmark>_T20/leaderboard.md   # Table 1
 $OSB_RUNS_ROOT/reports/<benchmark>_T20/{by_review_type,ranking,pareto}.csv
 ```
 
-**Pre-registration step**: before opening any report, copy
-`frozen/open_sr_bench/manifest.json` and every
-`locked_operating_points.json` into `datasets/manifests/` and commit them.
+**Pre-registration and unblinding**: development uses the `val`
+leaderboard. When thresholds are final:
+
+```bash
+osb preregister && git add datasets/manifests && git commit -m "Pre-register"
+```
+
+```bash
+UNBLIND=1 sbatch slurm/calibrate_eval.sbatch
+```
+
+Every held-out evaluation is appended to `$OSB_RUNS_ROOT/unblinding_log.jsonl`.
+Jobs pass `--hardware killarney_l40s|killarney_h100` (set by
+`submit_all.sh` from `GPU=`); `auto` detection also works.
 
 ## 4. Throughput and budget planning
 

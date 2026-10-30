@@ -1,0 +1,23 @@
+# Single 24 GB GPU (RTX 3090 / 4090 / A5000 / L4).
+name: gpu_24gb
+gpu_memory_gb: 24
+all:
+  gradient_checkpointing: true
+  auto_batch: true
+  num_workers: 6
+  eval_batch_size: 128
+  optim: {batch_size_per_gpu: 16}
+backbones:
+  modernbert_large: {optim: {batch_size_per_gpu: 8}, eval_batch_size: 64}
+  deberta_v3_large: {optim: {batch_size_per_gpu: 8}, eval_batch_size: 64}
+  qwen3_reranker_0_6b: {optim: {batch_size_per_gpu: 8}}
+  qwen3_reranker_4b: {base_dtype: bf16, max_seq_len: 1024,
+                      optim: {batch_size_per_gpu: 1}, eval_batch_size: 8}
+  modernbert_base: {gradient_checkpointing: false,
+                    optim: {batch_size_per_gpu: 32}}
+  biolinkbert_base: {gradient_checkpointing: false,
+                     optim: {batch_size_per_gpu: 64}, eval_batch_size: 256}
+  pubmedbert_base: {gradient_checkpointing: false,
+                    optim: {batch_size_per_gpu: 64}, eval_batch_size: 256}
+  titan_sr_pubmedbert: {gradient_checkpointing: false}
+  titan_sr_biolinkbert: {gradient_checkpointing: false}

@@ -38,6 +38,19 @@ def _expand(value: Any) -> Any:
     return value
 
 
+def deep_merge(
+    base: dict[str, Any], override: dict[str, Any]
+) -> dict[str, Any]:
+    """Recursively merges `override` into a deep copy of `base`."""
+    out = copy.deepcopy(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = deep_merge(out[key], value)
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
 class Config:
     """Read-only view over a nested configuration dictionary."""
 
@@ -47,9 +60,18 @@ class Config:
 
     @classmethod
     def load(cls, path: str) -> "Config":
-        """Loads and env-expands a YAML file."""
+        """Loads and env-expands a YAML file.
+
+        A top-level `extends: other.yaml` (relative to this file) loads the
+        parent first and deep-merges this file over it, so profiles such as
+        configs/benchmark_local.yaml only list what they change.
+        """
         with open(path, encoding="utf-8") as fh:
             data = yaml.safe_load(fh) or {}
+        parent = data.pop("extends", None)
+        if parent:
+            parent_path = os.path.join(os.path.dirname(path), parent)
+            data = deep_merge(cls.load(parent_path).as_dict(), data)
         return cls(_expand(data), source=path)
 
     def get(self, dotted_key: str, default: Any = _MISSING) -> Any:

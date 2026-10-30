@@ -96,13 +96,15 @@ splits:
   embedder: ncbi/MedCPT-Query-Encoder   # "tfidf" for a CPU-only fallback.
   # Ratios for families that contain at least one eval-window review.
   temporal_ratios: {train: 0.75, val: 0.10, eval: 0.15}
-  # Families made only of pre-window (legacy) reviews.
-  legacy_ratios: {train: 0.95, val: 0.05, eval: 0.0}
+  # Families made only of pre-window (legacy) reviews. `test` is the
+  # review-level (family-level) internal holdout: never trained, tuned or
+  # calibrated on; decontaminated like every other protected split.
+  legacy_ratios: {train: 0.80, val: 0.05, test: 0.15}
   # Hold out TITAN-SR's own published test split as a secondary benchmark
   # so we can compare head-to-head on their data as well as ours.
   titan_sr_test_as_benchmark: true
   # Purge train/val records matching any of these splits' fingerprints.
-  purge_against: [eval, prospective, titan_test]
+  purge_against: [test, eval, prospective, titan_test]
   purge_train_against_val: true
   eval_families_per_type: 10
   min_release_families: 50
@@ -123,6 +125,22 @@ calibration:
   cross_fit_folds: 5
   positive_class_weight: 5.0
   meta_c: 1.0
+  # RCT-classifier stacking features are added automatically when
+  # splits/rct_scores.parquet exists (`osb calibrate --rct auto|on|off`).
+
+# ---------------------------------------------------------------------------
+# Cochrane-recipe RCT classifier (src/opensrbench/rct/).
+# ---------------------------------------------------------------------------
+rct:
+  backend: cochrane               # cochrane | pubmed_pt | hf
+  years: [2000, 2024]             # Training corpus publication years.
+  per_year_rct: 800               # ~20k RCTs.
+  per_year_per_negative_stratum: 600   # x4 strata -> ~60k non-RCTs.
+  target_recall: 0.99             # Cut-off retains 99% of RCTs (Cochrane).
+  svm_c: 0.1
+  crowd_csv: null                 # Optional Cochrane Crowd export
+                                  # (columns: title, abstract, label[, pmid]).
+  hf_model: system-technologies/BiomedNLP-BiomedBERT-abstract-RCT-classifier-public
 
 evaluation:
   bootstrap_replicates: 5000

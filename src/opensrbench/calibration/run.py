@@ -18,6 +18,7 @@ from opensrbench import config
 from opensrbench.calibration import stacking
 from opensrbench.calibration import thresholds as thresholds_lib
 from opensrbench.modeling import spec as spec_lib
+from opensrbench.rct import run as rct_run
 from opensrbench.utils import io
 
 
@@ -58,9 +59,14 @@ def _val_summary(val: pd.DataFrame, taus: dict[str, float]) -> dict:
 def write_systems(
     scored: pd.DataFrame, taus: dict[str, float], name: str, systems_dir: str
 ) -> list[str]:
-    """Writes one decision file per operating point (non-val sets)."""
+    """Writes one decision file per operating point.
+
+    Validation rows carry out-of-fold stacked scores and are kept for
+    development reports (`osb evaluate --benchmark val`); they are flagged
+    as a dev set there because thresholds were locked on them.
+    """
     out_paths = []
-    test = scored[scored["set"] != "val"]
+    test = scored
     for op, tau in taus.items():
         system = f"{name}@{op}"
         frame = test[["set", "review_id", "record_id", "score"]].assign(
@@ -75,6 +81,17 @@ def write_systems(
             )
         )
     return out_paths
+
+
+def _use_rct(mode: str, combiner: str, paths: config.Paths) -> bool:
+    """Whether to add RCT-classifier features (needs `osb rct score`)."""
+    available = os.path.exists(rct_run.scores_path(paths))
+    if mode == "on" and not available:
+        raise FileNotFoundError(
+            "--rct on needs splits/rct_scores.parquet; "
+            "run `osb rct train` and `osb rct score`."
+        )
+    return combiner == "stacking" and mode != "off" and available
 
 
 def run(args: Any) -> dict:
@@ -96,8 +113,18 @@ def run(args: Any) -> dict:
         raise RuntimeError(
             "no validation predictions; predict with --sets val,... first"
         )
+    name = args.ensemble
+    use_rct = _use_rct(getattr(args, "rct", "auto"), combiner, paths)
+    if use_rct:
+        rct = rct_run.rct_features(paths)
+        df = df.merge(rct, on=["review_id", "record_id"], how="left")
+        for col in rct_run.RCT_FEATURES:
+            df[col] = df[col].fillna(1.0 if col == "rct_missing" else 0.0)
+        name = f"{args.ensemble}+rct"
     if combiner == "stacking":
         df, features = stacking.build_features(df, members)
+        if use_rct:
+            features += list(rct_run.RCT_FEATURES)
         oof, model = stacking.fit_cross_fitted(
             df[is_val],
             features,
@@ -126,7 +153,7 @@ def run(args: Any) -> dict:
         [float(t) for t in cal["target_sensitivities"]],
         method,
     )
-    out_dir = os.path.join(runs_root, "calibration", args.ensemble)
+    out_dir = os.path.join(runs_root, "calibration", name)
     scored = df[
         [
             "set",
@@ -140,7 +167,8 @@ def run(args: Any) -> dict:
     ]
     io.write_parquet(scored, os.path.join(out_dir, "scored.parquet"))
     locked = {
-        "ensemble": args.ensemble,
+        "ensemble": name,
+        "rct_features": bool(use_rct),
         "members": members,
         "combiner": combiner,
         "threshold_method": method,
@@ -153,8 +181,6 @@ def run(args: Any) -> dict:
         "n_val_positives": int(val["label_final"].sum()),
     }
     io.write_json(locked, os.path.join(out_dir, "locked_operating_points.json"))
-    write_systems(
-        scored, taus, args.ensemble, os.path.join(runs_root, "systems")
-    )
+    write_systems(scored, taus, name, os.path.join(runs_root, "systems"))
     logging.info("locked thresholds (%s): %s", method, taus)
     return locked

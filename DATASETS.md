@@ -163,6 +163,15 @@ positives.
 | CSMeD-FT | full-text screening task (out of scope); CSMeD's T/A part is the union of sources above |
 | Miwa et al. 2015 | not publicly downloadable |
 
+## Split roles
+
+Legacy (pre-2025) families are split 80% train / 5% val / **15% test** (the
+review-level internal holdout, reported as `internal_test`); post-cutoff
+families 75% train / 10% val / 15% eval (`open_sr_bench`). TITAN-SR's test
+reviews form `titan_test`; reviews published after the freeze form
+`prospective`. Assignment is by whole family, stratified by review type,
+and deterministic (SHA-256).
+
 ## De-duplication and decontamination
 
 1. **Review level** (`build`): one copy per `review_key` (Cochrane CD
@@ -173,6 +182,9 @@ positives.
    whose objectives are near-duplicates (MedCPT cosine ≥ 0.88) form one
    family; families are split atomically.
 3. **Record level** (`split`): train/val records matching any `pmid`,
-   `title_fp` or `abstract_fp` of the eval, prospective or TITAN-SR test
-   splits are purged, and train is also purged against val. The audit in
+   `title_fp` or `abstract_fp` of the test, eval, prospective or TITAN-SR
+   test splits are purged, and train is also purged against val. The same
+   guard re-runs before every training run on the exact training frames.
+4. **Auxiliary models**: the RCT classifier's MEDLINE corpus is purged
+   against val and every protected split before training. The audit in
    `splits/audit.json` must report **0** matches or the pipeline stops.

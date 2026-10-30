@@ -56,6 +56,22 @@ def run(args) -> int:
             _check(
                 "bf16 supported", torch.cuda.is_bf16_supported(), required=False
             )
+            gib = torch.cuda.get_device_properties(0).total_memory / 2**30
+            _check("GPU memory", True, f"{gib:.1f} GiB")
+    except ImportError:
+        pass
+    from opensrbench.modeling import \
+        spec  # pylint: disable=import-outside-toplevel
+
+    profile = os.environ.get("OSB_HARDWARE") or spec.detect_hardware()
+    _check("hardware profile (auto / $OSB_HARDWARE)", True, profile)
+    try:
+        import psutil  # pylint: disable=import-outside-toplevel
+
+        ram = psutil.virtual_memory().total / 2**30
+        _check(
+            "system RAM >= 32 GiB", ram >= 32, f"{ram:.0f} GiB", required=False
+        )
     except ImportError:
         pass
     cfg = config.Config.load(args.config)

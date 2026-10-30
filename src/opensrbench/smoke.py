@@ -19,6 +19,8 @@ import yaml
 from opensrbench import config
 from opensrbench import pipeline
 from opensrbench import schema
+from opensrbench.rct import classifier as rct_classifier
+from opensrbench.rct import run as rct_run
 from opensrbench.utils import io
 
 _TOPICS = [
@@ -113,7 +115,7 @@ def synthetic_corpus(
                         "review_id": review_id,
                         "record_id": schema.text_record_id(source, title, ""),
                         "title": title,
-                        "abstract": f"{text}. {_words(rng, 25)}",
+                        "abstract": f"{text}. {_words(rng, 70)}",
                         "pub_date": f"{year - 1}-01-01",
                         "label_final": int(pos),
                         "label_abs": int(pos or ft_excl),
@@ -160,6 +162,49 @@ def _write_configs(workdir: str, base_config: str) -> tuple[str, str]:
     return bench_path, datasets_path
 
 
+def _train_synthetic_rct(ctx: pipeline.Context) -> None:
+    """Fits the Cochrane-recipe RCT classifier on synthetic text."""
+    rng = np.random.default_rng(7)
+    rows = []
+    for i in range(600):
+        rct = i % 3 == 0
+        design = (
+            "participants were randomly assigned in a randomized "
+            "controlled trial"
+            if rct
+            else rng.choice(
+                [
+                    "retrospective cohort study",
+                    "case control analysis",
+                    "cross sectional survey",
+                ]
+            )
+        )
+        rows.append(
+            {
+                "title": (
+                    f"Study {i} of {rng.choice(_TOPICS)} therapy " f"outcomes"
+                ),
+                "abstract": f"{design}. {_words(rng, 80)}",
+                "label": int(rct),
+            }
+        )
+    corpus = pd.DataFrame(rows)
+    train_part, calib_part = corpus.iloc[:400], corpus.iloc[400:]
+    model = rct_classifier.CochraneRctClassifier(min_df=1)
+    # 90% target: 200 calibration records cannot certify 99% recall.
+    model.fit(
+        train_part["title"],
+        train_part["abstract"],
+        train_part["label"],
+        calib_part["title"],
+        calib_part["abstract"],
+        calib_part["label"],
+        target_recall=0.90,
+    )
+    model.save(os.path.join(ctx.paths.root, "rct", "model"))
+
+
 def run(args: argparse.Namespace) -> dict:
     # pylint: disable=import-outside-toplevel
     from opensrbench import cascade
@@ -183,6 +228,7 @@ def run(args: argparse.Namespace) -> dict:
         ensemble_config=args.ensemble_config,
         runs_dir=ctx.paths.runs,
         output_dir=ctx.paths.runs,
+        hardware="cpu",
     )
     for fold in (0, 1):
         train.run(
@@ -199,12 +245,22 @@ def run(args: argparse.Namespace) -> dict:
             argparse.Namespace(
                 backbone="tiny",
                 fold=fold,
-                batch_size=64,
-                sets=["val", "open_sr_bench", "prospective"],
+                batch_size=None,
+                sets=["val", "internal_test", "open_sr_bench", "prospective"],
                 **common,
             )
         )
-    calibrate.run(argparse.Namespace(ensemble="smoke", method=None, **common))
+    calibrate.run(
+        argparse.Namespace(ensemble="smoke", method=None, rct="off", **common)
+    )
+    # RCT classifier: Cochrane recipe on a synthetic, disjoint corpus, then
+    # score + filter baseline + stacking features ("smoke+rct").
+    _train_synthetic_rct(ctx)
+    rct_run.cmd_score(ctx)
+    rct_run.cmd_systems(ctx)
+    calibrate.run(
+        argparse.Namespace(ensemble="smoke", method=None, rct="on", **common)
+    )
 
     # A fake "verifier LLM" so the cascade and LLM scoring paths run.
     tiers = io.read_parquet(
@@ -247,6 +303,18 @@ def run(args: argparse.Namespace) -> dict:
             systems=None,
             reference="smoke@tau99",
             replicates=300,
+            unblind=True,
+            **common,
+        )
+    )
+    report.run(
+        argparse.Namespace(
+            benchmark="internal_test",
+            tier=20,
+            systems=None,
+            reference="smoke@tau99",
+            replicates=300,
+            unblind=True,
             **common,
         )
     )

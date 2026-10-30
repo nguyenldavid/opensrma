@@ -1,0 +1,35 @@
+# Single NVIDIA RTX 3080 Ti (12 GB GDDR6X, Ampere sm_86: bf16 + FlashAttention-2
+# supported). Also fits RTX 3080 12 GB / 4070 Ti / A2000 12 GB.
+#
+# Micro-batches are sized for 12 GB with gradient checkpointing; gradient
+# accumulation preserves each backbone's effective batch, so the training
+# recipe is identical to Killarney. `auto_batch` halves a micro-batch that
+# still OOMs on the probe (e.g. when the desktop uses part of the VRAM).
+name: rtx3080ti
+gpu_memory_gb: 12
+all:
+  gradient_checkpointing: true
+  auto_batch: true
+  num_workers: 4
+  eval_batch_size: 64
+  optim: {batch_size_per_gpu: 8}
+backbones:
+  modernbert_large: {optim: {batch_size_per_gpu: 4}, eval_batch_size: 32}
+  deberta_v3_large: {optim: {batch_size_per_gpu: 4}, eval_batch_size: 32}
+  biolinkbert_large: {optim: {batch_size_per_gpu: 8}}
+  biomedbert_large: {optim: {batch_size_per_gpu: 8}}
+  qwen3_reranker_0_6b: {optim: {batch_size_per_gpu: 4}, eval_batch_size: 32}
+  qwen3_reranker_4b:
+    unsupported: "needs >= 24 GB VRAM; use qwen3_reranker_0_6b locally"
+  modernbert_base: {gradient_checkpointing: false,
+                    optim: {batch_size_per_gpu: 16}}
+  biolinkbert_base: {gradient_checkpointing: false,
+                     optim: {batch_size_per_gpu: 32}, eval_batch_size: 128}
+  pubmedbert_base: {gradient_checkpointing: false,
+                    optim: {batch_size_per_gpu: 32}, eval_batch_size: 128}
+  titan_sr_pubmedbert: {gradient_checkpointing: false,
+                        optim: {batch_size_per_gpu: 32},
+                        eval_batch_size: 128}
+  titan_sr_biolinkbert: {gradient_checkpointing: false,
+                         optim: {batch_size_per_gpu: 32},
+                         eval_batch_size: 128}

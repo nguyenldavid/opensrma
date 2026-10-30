@@ -20,3 +20,8 @@ assert sum(leaks.values()) == 0, f"LEAKAGE: {leaks}"
 print("Zero-leakage audit passed:", leaks)
 print("Benchmark:", audit["benchmark"])
 PY
+osb audit
+# Cochrane-recipe RCT classifier (corpus fetched by run_data_online.sh).
+if [[ -f "$OSB_DATA_ROOT/rct/corpus_pmids.parquet" ]]; then
+  osb rct train && osb rct score && osb rct systems
+fi

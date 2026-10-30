@@ -48,6 +48,23 @@ NCBI email/key), then `bash slurm/setup_env.sh --vllm`,
 node, tmux), `WITH_LLM=1 bash slurm/submit_all.sh`. Always submit from the
 repo root (Slurm log paths are relative).
 
+## Compute: the team workstation (RTX 3080 Ti, 12 GB)
+
+Development also happens on a single RTX 3080 Ti machine (Linux/WSL2).
+Use `OSB_HARDWARE=rtx3080ti` (or `--hardware rtx3080ti`),
+`configs/benchmark_local.yaml` for data, and `bash scripts/run_local.sh`
+for the full pipeline. The default local ensemble is `titan_open_lite`;
+`titan_open_local` runs the large encoders with gradient checkpointing;
+Qwen3-Reranker-4B is refused on 12 GB by design. Hardware profiles may
+change batch/memory settings only — never the recipe (loss, sampler,
+budgets, sequence length, folds). Guide: [docs/LOCAL_GPU.md](docs/LOCAL_GPU.md).
+
+## What to work on next
+
+Read [docs/ROADMAP.md](docs/ROADMAP.md) first: it lists the current status,
+what has and has not been validated on real hardware, and prioritised next
+steps (P0 → P2). Update it at the end of every working session.
+
 ## Commands
 
 ```bash
@@ -61,14 +78,20 @@ make format && make lint            # pyink + isort (Google), pylint
 
 ## Non-negotiable invariants
 
-1. **Zero leakage.** Never weaken `splits/decontam.py`, the family graph or
-   the purge set. The audit must report 0 `pmid` / `title_fp` /
+1. **Zero leakage.** Never weaken `splits/decontam.py`, `splits/guards.py`,
+   the family graph or the purge set (`test, eval, prospective,
+   titan_test`, plus train-vs-val). Anything trained on PubMed text that
+   feeds the model or the stacker (e.g. the RCT classifier corpus) must be
+   decontaminated against val and every protected split. The audit must report 0 `pmid` / `title_fp` /
    `abstract_fp` matches between train/val and eval/prospective/titan_test,
    and between train and val. `LeakageError` must stop the pipeline.
 2. **Thresholds are locked on validation only** (out-of-fold stacked
-   scores), committed to `datasets/manifests/` *before* any held-out
-   benchmark is looked at. Never tune anything on `eval`, `prospective` or
-   `titan_test`; never choose operating points post hoc.
+   scores), committed to `datasets/manifests/` (`osb preregister`) *before*
+   any held-out benchmark is looked at. Never tune anything on `test`
+   (internal_test), `eval`, `prospective` or `titan_test`; never choose
+   operating points post hoc. Develop against `--benchmark val`; held-out
+   evaluation needs `--unblind` and is logged in `runs/unblinding_log.jsonl`
+   — never delete or edit that ledger.
 3. **Benchmark determinism.** Frozen tiers use
    `SHA-256("OPEN-SR-BENCH-V1:" + review_id + ":" + record_id)`; do not
    change salts, ordering or tier logic for a released version — bump the
@@ -95,7 +118,8 @@ pubmed/           E-utilities client + parser + SQLite cache (+ OpenAlex)
 harvest/          Europe PMC client + JATS parser (criteria, included studies)
 cohort/           query synthesis, BM25/MedCPT/RRF ranking, pool rebuild
 pipeline.py       stages: download, ingest, enrich, pools, build, split, freeze
-splits/           families (union-find), assign, decontam, tiers
+splits/           families (union-find), assign, decontam, guards, tiers
+rct/              Cochrane-recipe RCT classifier, leak-free PT corpus
 modeling/         inputs (layout + [CRIT] markers), model (soft-min veto),
                   losses (ASL + in-review ranking), sampler, train (DDP), predict
 calibration/      stacking (within-review features, cross-fit), thresholds

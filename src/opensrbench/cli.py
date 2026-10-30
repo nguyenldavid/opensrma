@@ -9,7 +9,11 @@
   osb calibrate --ensemble titan_open
   osb llm-sweep
   osb cascade --ensemble titan_open
-  osb evaluate --benchmark open_sr_bench
+  osb rct corpus|train|score|systems  Cochrane-recipe RCT classifier.
+  osb evaluate --benchmark val       Development leaderboard.
+  osb preregister                    Freeze manifests + thresholds.
+  osb evaluate --benchmark open_sr_bench --unblind   (logged)
+  osb audit                          Re-run every leakage guard.
   osb smoke                          Synthetic end-to-end run on CPU.
 
 Run `osb <command> --help` for options. Configs default to ./configs.
@@ -23,13 +27,14 @@ from opensrbench import config
 from opensrbench.utils import io
 
 _STAGE_GROUPS = {
-    "online": ["download", "ingest", "enrich", "pools"],
+    "online": ["download", "ingest", "enrich", "pools", "rct_corpus"],
     "offline": ["build", "split", "freeze"],
     "all": [
         "download",
         "ingest",
         "enrich",
         "pools",
+        "rct_corpus",
         "build",
         "split",
         "freeze",
@@ -135,6 +140,39 @@ def _cmd_evaluate(args) -> None:
     print(report.markdown_table(result))
 
 
+def _cmd_audit(args) -> None:
+    from opensrbench import pipeline  # pylint: disable=import-outside-toplevel
+    from opensrbench.splits import \
+        guards  # pylint: disable=import-outside-toplevel
+
+    paths = config.Paths.from_config(config.Config.load(args.config))
+    reviews, records, splits = pipeline.load_split_data(
+        paths, ["review_id", "pmid", "title_fp", "abstract_fp"]
+    )
+    report = guards.verify_all(reviews, records, splits)
+    print(json.dumps(report, indent=2))
+    print("All leakage guards passed.")
+
+
+def _cmd_preregister(args) -> None:
+    from opensrbench.evaluation import \
+        ledger  # pylint: disable=import-outside-toplevel
+
+    paths = config.Paths.from_config(config.Config.load(args.config))
+    written = ledger.preregister(args.runs_dir or paths.runs, paths.frozen)
+    print("\n".join(written))
+    print(
+        "Now commit these files (git add datasets/manifests && git commit) "
+        "before running `osb evaluate --unblind`."
+    )
+
+
+def _cmd_rct(args) -> None:
+    from opensrbench.rct import run  # pylint: disable=import-outside-toplevel
+
+    print(json.dumps(run.run(args), indent=2, default=str))
+
+
 def _cmd_doctor(args) -> None:
     from opensrbench import doctor  # pylint: disable=import-outside-toplevel
 
@@ -195,14 +233,36 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         help="Spec override, e.g. optim.lr=1e-5 (repeatable).",
     )
+    p.add_argument(
+        "--hardware",
+        default=None,
+        help="Hardware profile in configs/hardware (rtx3080ti, gpu_24gb, "
+        "killarney_l40s, killarney_h100, cpu) or 'auto' (default; also "
+        "$OSB_HARDWARE).",
+    )
     p.set_defaults(fn=_cmd_train)
 
     p = sub.add_parser("predict", help="Score review sets with a checkpoint.")
     _common(p)
     p.add_argument("--backbone", required=True)
     p.add_argument("--fold", type=int, default=0)
-    p.add_argument("--sets", default="val,open_sr_bench,titan_test,prospective")
-    p.add_argument("--batch-size", type=int, default=128)
+    p.add_argument(
+        "--sets",
+        default="val,internal_test,open_sr_bench,titan_test,prospective",
+    )
+    p.add_argument(
+        "--batch-size",
+        type=int,
+        default=None,
+        help="Default: the hardware profile's eval_batch_size.",
+    )
+    p.add_argument(
+        "--hardware",
+        default=None,
+        help="Hardware profile in configs/hardware (rtx3080ti, gpu_24gb, "
+        "killarney_l40s, killarney_h100, cpu) or 'auto' (default; also "
+        "$OSB_HARDWARE).",
+    )
     p.set_defaults(fn=_cmd_predict)
 
     p = sub.add_parser(
@@ -214,6 +274,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--method",
         default=None,
         choices=[None, "pooled_conformal", "equal_review", "equal_review_lcb"],
+    )
+    p.add_argument(
+        "--rct",
+        default="auto",
+        choices=["auto", "on", "off"],
+        help="Add Cochrane-RCT-classifier features (systems get '+rct').",
     )
     p.set_defaults(fn=_cmd_calibrate)
 
@@ -248,7 +314,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--reference", default=None)
     p.add_argument("--replicates", type=int, default=None)
+    p.add_argument(
+        "--unblind",
+        action="store_true",
+        help="Required for held-out benchmarks; logged in "
+        "runs/unblinding_log.jsonl.",
+    )
     p.set_defaults(fn=_cmd_evaluate)
+
+    p = sub.add_parser("audit", help="Re-run every leakage guard.")
+    _common(p)
+    p.set_defaults(fn=_cmd_audit)
+
+    p = sub.add_parser(
+        "preregister",
+        help="Copy frozen manifests + locked thresholds to datasets/manifests.",
+    )
+    _common(p)
+    p.set_defaults(fn=_cmd_preregister)
+
+    p = sub.add_parser("rct", help="Cochrane-recipe RCT classifier.")
+    _common(p)
+    p.add_argument(
+        "rct_command", choices=["corpus", "train", "score", "systems"]
+    )
+    p.add_argument("--datasets-config", default=config.DEFAULT_DATASETS_CONFIG)
+    p.add_argument(
+        "--backend", default=None, choices=[None, "cochrane", "hf", "pubmed_pt"]
+    )
+    p.add_argument("--device", default=None)
+    p.set_defaults(fn=_cmd_rct)
 
     p = sub.add_parser("doctor", help="Check environment readiness.")
     _common(p)

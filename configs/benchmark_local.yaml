@@ -1,0 +1,22 @@
+# Single-workstation profile (e.g. RTX 3080 Ti, 32-64 GB RAM, ~500 GB disk).
+# Inherits everything from benchmark_v1.yaml and only shrinks the most
+# expensive data knobs so the full pipeline finishes in days, not weeks.
+# The benchmark definition (dates, tiers, salts, splits) is unchanged, so
+# results remain comparable with a Killarney run.
+#
+#   osb data --config configs/benchmark_local.yaml --stages online
+extends: benchmark_v1.yaml
+
+paths:
+  data_root: ${OSB_DATA_ROOT:-datasets}
+  runs_root: ${OSB_RUNS_ROOT:-runs}
+
+cohort:
+  augment_k: 300                  # Retrieved negatives per legacy review.
+  augment_max_reviews: 8000       # Cap on augmented legacy reviews.
+  dense:
+    batch_size: 32                # MedCPT batch for a 12 GB GPU.
+
+rct:
+  per_year_rct: 400
+  per_year_per_negative_stratum: 300

@@ -21,11 +21,12 @@ maps and candidate pools are cached and skipped when present.
 | `ingest` | | `raw/` | `interim/<source>/{reviews,records}.parquet` | canonical schema; text may be missing for PMID records |
 | `enrich` | ✓ | `interim/` | `cache/pubmed.sqlite`, `interim/enrich/*` | review PMIDs (PMC id converter, DOI, Cochrane CD); all citation texts; DOI→PMID; OpenAlex fallback |
 | `pools` | ✓ | `interim/`, PubMed cache | `interim/pools/<review>.json` | Tier 1 (verbatim strategy) / Tier 2 (strict + broad PICO queries) under t_r; texts of all candidates cached |
+| `rct_corpus` | ✓ | — | `rct/corpus_pmids.parquet`, PubMed cache | MEDLINE publication-type sample for the RCT classifier (decontaminated later, at `osb rct train`) |
 | `build` | | all of the above | `processed/{reviews,records}.parquet`, `build_summary.json` | review de-dup by key/priority; BM25 + MedCPT + RRF pool assembly; text attach; quality filters; fingerprints; criteria lists; eligibility |
-| `split` | | `processed/` | `splits/{splits,records}.parquet`, `audit.json` | family graph; atomic assignment; purge; **LeakageError on any leak** |
+| `split` | | `processed/` | `splits/{splits,records}.parquet`, `audit.json` | family graph; atomic assignment (train/val/**test**/eval/prospective/titan_test); purge; guards; **LeakageError on any leak** |
 | `freeze` | | `splits/` | `frozen/<bench>/{tiers,review_totals}.parquet`, `manifest.json` | T10/T20/T40, stability subset, SHA-256 per tier |
 
-Groups: `online` = download,ingest,enrich,pools; `offline` = build,split,freeze;
+Groups: `online` = download,ingest,enrich,pools,rct_corpus; `offline` = build,split,freeze;
 `all`. Restrict sources with `--only clef_tar,chan2024`. Disable MedCPT with
 `--device none` (BM25 only) or set `cohort.dense.enabled: false`.
 
@@ -66,6 +67,8 @@ external tools — can be evaluated by writing this format.
 |---|---|---|
 | `open_sr_bench` | ≤ 10 eval families per review type (target 85–100 reviews) meeting eligibility | **primary** frozen benchmark (frontier LLMs on T20) |
 | `open_sr_bench_extended` | every eval-split review | encoder-only extended evaluation |
+| `internal_test` | every `test`-split review (15% of legacy families, all sources) | review-level internal holdout |
+| `val` | the calibration split | **development only** (thresholds are locked on it) |
 | `titan_test` | TITAN-SR test split + external holdout | head-to-head on TITAN-SR's own benchmark |
 | `prospective` | published after `temporal.freeze_date` | strictly prospective holdout |
 
@@ -78,9 +81,14 @@ external tools — can be evaluated by writing this format.
 | `osb calibrate --ensemble E` | all member `preds.parquet` | `runs/calibration/E/{scored.parquet,locked_operating_points.json}`, `runs/systems/E@tau*.parquet` |
 | `osb llm-sweep` | `frozen/<bench>/tiers.parquet`, `configs/llm_models.yaml` | `runs/llm/<model>/<cond>/responses_seed{0,1}.jsonl`, `runs/systems/<model>__<cond>.parquet` |
 | `osb cascade --ensemble E` | calibration + verifier decisions | `runs/systems/cascade__E__<verifier>.parquet` |
-| `osb evaluate --benchmark NAME` | tiers + decision files | `runs/reports/NAME_T<k>/{leaderboard.json,leaderboard.md,by_review_type.csv,ranking.csv,pareto.csv}` |
+| `osb rct train / score / systems` | RCT corpus, splits | `rct/model/` (+ model card), `splits/rct_scores.parquet`, `runs/systems/cochrane_rct_filter.parquet` |
+| `osb calibrate --ensemble E --rct auto` | + RCT scores | systems named `E+rct@tau*` |
+| `osb evaluate --benchmark NAME [--unblind]` | tiers + decision files | `runs/reports/NAME_T<k>/{leaderboard.json,leaderboard.md,by_review_type.csv,ranking.csv,pareto.csv}`; held-out names need `--unblind` and append to `runs/unblinding_log.jsonl` |
+| `osb preregister` | frozen manifests, locked thresholds | copies in `datasets/manifests/` (commit them) |
+| `osb audit` | splits | guard report (raises on any leak) |
 
-Spec overrides for ablations: `osb train ... --override loss.rank_type=none
+Hardware: `osb train/predict --hardware rtx3080ti|gpu_24gb|killarney_l40s|killarney_h100|cpu|auto`
+(see `configs/hardware/`). Spec overrides for ablations: `osb train ... --override loss.rank_type=none
 --override architecture=pooled` (values parsed as YAML).
 
 ## Evaluating an external system

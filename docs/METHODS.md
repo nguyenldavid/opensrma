@@ -37,6 +37,7 @@ same-data test.
 | D9 | **Review-conditional stacking** (within-review z-scores, rank percentiles, fold and cross-model dispersion, cohort size), cross-fitted on validation families. | Raw scores are not comparable across reviews; normalising within each candidate pool is the main lever against the 99.5% specificity collapse. |
 | D10 | **Exact split-conformal thresholds** (or equal-review / LCB variants) locked on out-of-fold validation scores. | Finite-sample sensitivity guarantee without optimistic bias; no post-hoc operating points. |
 | D11 | **Two-stage cascade** to a local gpt-oss-20b verifier for the gray zone. | Spends LLM compute only where the encoder is uncertain; zero API cost on Killarney. |
+| D12 | **Cochrane-recipe RCT classifier** as stacking features (`p_rct`, × `requires_rct` parsed from the criteria) and as a standalone `cochrane_rct_filter` baseline. | In RCT-only reviews most hard negatives are non-randomised designs; a dedicated, well-calibrated design classifier removes them at a fixed 99% RCT recall. |
 
 ## 3. Model details
 
@@ -78,6 +79,22 @@ specificity at 99% recall on the held-out family fold.
    this rather than pretending to certify the target.
 4. Operating points: τ93, τ95, τ97, τ99, τ99.5 and τJ (equal-review
    Youden-optimal), all locked before unblinding.
+
+## 4b. RCT classifier (`src/opensrbench/rct/`)
+
+Re-implementation of the Cochrane RCT Classifier (Thomas et al., J Clin
+Epidemiol 2021;133:140–151): binary bag-of-words without stop words;
+SVM1 = linear SVM on 1–3-grams; SVM2 = linear SVM on unigrams with RCTs
+oversampled; mean of standardised margins; Platt scaling on a disjoint
+calibration split; cut-off retaining 99% of calibration RCTs (exact
+conformal order statistic); records with abstract < 400 or title < 15
+characters are not machine-classified (always kept). Labels: MEDLINE
+"Randomized Controlled Trial" publication type (NLM indexers) on a corpus
+stratified into RCTs, non-randomised trials, observational studies, reviews
+and other human studies, sampled per month 2000–2024; an optional Cochrane
+Crowd export can be added. The corpus is purged against val and all
+protected splits. Backends `pubmed_pt` (indexing only) and `hf` (an
+external transformer, not contamination-audited, opt-in) are available.
 
 ## 5. Statistics
 

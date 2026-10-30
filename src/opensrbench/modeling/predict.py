@@ -25,25 +25,21 @@ from opensrbench.modeling import data as data_lib
 from opensrbench.modeling import distributed
 from opensrbench.modeling import inputs
 from opensrbench.modeling import model as model_lib
+from opensrbench.modeling import spec as spec_lib
 from opensrbench.modeling import train as train_lib
+from opensrbench.splits import assign
 from opensrbench.utils import io
 
-DEFAULT_SETS = ("val", "open_sr_bench", "titan_test", "prospective")
+DEFAULT_SETS = (
+    "val",
+    "internal_test",
+    "open_sr_bench",
+    "titan_test",
+    "prospective",
+)
 
 
-def review_sets(splits: pd.DataFrame) -> dict[str, set[str]]:
-    """Named review-id sets used throughout calibration and evaluation."""
-    return {
-        "val": set(splits.loc[splits["split"] == "val", "review_id"]),
-        "open_sr_bench": set(splits.loc[splits["in_benchmark"], "review_id"]),
-        "eval": set(splits.loc[splits["split"] == "eval", "review_id"]),
-        "titan_test": set(
-            splits.loc[splits["split"] == "titan_test", "review_id"]
-        ),
-        "prospective": set(
-            splits.loc[splits["split"] == "prospective", "review_id"]
-        ),
-    }
+review_sets = assign.review_sets
 
 
 def run(args: Any) -> str:
@@ -57,8 +53,18 @@ def run(args: Any) -> str:
         os.path.join(run_dir, "best"), str(device)
     )
     spec = meta["spec"]
+    if getattr(args, "hardware", None):
+        # Inference batch size follows the *current* machine, not the one
+        # the checkpoint was trained on.
+        ens_cfg = config.Config.load(args.ensemble_config)
+        spec["eval_batch_size"] = spec_lib.backbone_spec(
+            ens_cfg, args.backbone, args.hardware
+        ).get("eval_batch_size")
+    batch_size = args.batch_size or train_lib.eval_batch_size(spec)
     builder = inputs.InputBuilder(tokenizer, spec)
-    reviews, records, splits = pipeline.load_split_data(paths)
+    reviews, records, splits = pipeline.load_split_data(
+        paths, pipeline.MODEL_RECORD_COLUMNS
+    )
     sets = review_sets(splits)
     frames = []
     for name in args.sets:
@@ -82,7 +88,7 @@ def run(args: Any) -> str:
         model,
         frame,
         builder,
-        args.batch_size,
+        batch_size,
         device,
         rank,
         world,

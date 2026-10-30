@@ -170,3 +170,33 @@ def test_layerwise_groups_cover_all_trainable_parameters():
     groups = model_lib.layerwise_param_groups(model, 1e-4, 1e-3, 0.01, 0.9)
     n = sum(p.numel() for g in groups for p in g["params"])
     assert n == sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+
+def test_sampler_shrinks_groups_to_small_micro_batches():
+    review = np.repeat(np.arange(4), 40)
+    label = np.tile(np.r_[np.ones(6), np.zeros(34)], 4).astype(int)
+    rank = np.where(label == 0, np.tile(np.arange(40), 4), np.nan)
+    cfg = {
+        "group_size": 16,
+        "pos_per_group": 3,
+        "negatives_per_positive": 6,
+        "hard_negative_fraction": 0.5,
+        "max_pos_per_review": 64,
+    }
+    sampler = sampler_lib.ReviewGroupedBatchSampler(
+        review, label, label, rank, 4, cfg, 0
+    )
+    assert len(sampler) > 0
+    for batch in sampler:
+        assert len(batch) <= 4
+        assert len(set(review[batch])) == 1  # One review group per batch.
+
+
+def test_probe_batch_size_is_noop_on_cpu():
+    from opensrbench.modeling import \
+        train  # pylint: disable=import-outside-toplevel
+
+    tok, _ = _builder()
+    model = model_lib.TitanScreener(_SPEC, tok)
+    spec = dict(_SPEC, name="tiny", auto_batch=True)
+    assert train.probe_batch_size(model, spec, torch.device("cpu"), 16) == 16

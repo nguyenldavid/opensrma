@@ -36,6 +36,7 @@ from opensrbench.modeling import losses
 from opensrbench.modeling import model as model_lib
 from opensrbench.modeling import sampler as sampler_lib
 from opensrbench.modeling import spec as spec_lib
+from opensrbench.splits import guards
 from opensrbench.utils import io
 
 
@@ -142,6 +143,84 @@ def score_frame(
     return result.reset_index(drop=True)
 
 
+def eval_batch_size(spec: dict[str, Any]) -> int:
+    """Inference batch size (hardware profile or 2x the micro-batch)."""
+    return int(
+        spec.get("eval_batch_size")
+        or 2 * int(spec["optim"]["batch_size_per_gpu"])
+    )
+
+
+def probe_batch_size(
+    model: torch.nn.Module,
+    spec: dict[str, Any],
+    device: torch.device,
+    start: int,
+    rank: int = 0,
+    world: int = 1,
+) -> int:
+    """Largest micro-batch <= `start` whose worst case fits in GPU memory.
+
+    Runs forward + backward on a full-length synthetic batch while holding
+    a buffer the size of the AdamW states, halving on CUDA OOM. All DDP
+    ranks agree on the minimum. No-op on CPU or with `auto_batch: false`.
+
+    Raises:
+      RuntimeError: If even a micro-batch of 1 does not fit.
+    """
+    if device.type != "cuda" or not spec.get("auto_batch", True):
+        return start
+    length = int(spec["max_seq_len"])
+    k = int(spec["budgets"]["max_criteria"])
+    vocab = model.encoder.get_input_embeddings().num_embeddings
+    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    size = start
+    model.train()
+    while size >= 1:
+        reserve = None
+        try:
+            # AdamW keeps two fp32 moments per trainable parameter.
+            reserve = torch.empty(
+                2 * trainable, dtype=torch.float32, device=device
+            )
+            ids = torch.randint(
+                5, max(6, vocab - 1), (size, length), device=device
+            )
+            step = max(1, length // (k + 1))
+            crit = (
+                (torch.arange(1, k + 1, device=device) * step)
+                .clamp(max=length - 1)
+                .expand(size, k)
+                .contiguous()
+            )
+            types = torch.zeros_like(ids) if model.use_token_types else None
+            with _autocast(device, spec.get("precision", "bf16")):
+                out = model(ids, torch.ones_like(ids), crit, types)
+                loss = out["logit_final"].sum() + out["logit_abs"].sum()
+            loss.backward()
+            del out, loss, ids, crit, reserve
+            model.zero_grad(set_to_none=True)
+            torch.cuda.synchronize(device)
+            torch.cuda.empty_cache()
+            break
+        except torch.cuda.OutOfMemoryError:
+            del reserve
+            model.zero_grad(set_to_none=True)
+            torch.cuda.empty_cache()
+            logging.warning("micro-batch %d does not fit; halving", size)
+            size //= 2
+    size = min(distributed.gather_objects(size, world))
+    if size < 1:
+        raise RuntimeError(
+            f"{spec['name']} does not fit on this GPU even with micro-batch 1"
+            f" at {spec['max_seq_len']} tokens; lower max_seq_len, enable "
+            "gradient_checkpointing or use a smaller backbone."
+        )
+    if size != start and rank == 0:
+        logging.info("auto_batch: micro-batch %d -> %d", start, size)
+    return size
+
+
 def _evaluate(
     model, frame, builder, spec, device, rank, world
 ) -> dict[str, float]:
@@ -149,7 +228,7 @@ def _evaluate(
         model,
         frame,
         builder,
-        int(spec["optim"]["batch_size_per_gpu"]) * 2,
+        eval_batch_size(spec),
         device,
         rank,
         world,
@@ -183,7 +262,9 @@ def run(args: Any) -> dict[str, Any]:
     bench_cfg = config.Config.load(args.config)
     ens_cfg = config.Config.load(args.ensemble_config)
     paths = config.Paths.from_config(bench_cfg)
-    spec = spec_lib.backbone_spec(ens_cfg, args.backbone)
+    spec = spec_lib.backbone_spec(
+        ens_cfg, args.backbone, getattr(args, "hardware", None)
+    )
     spec = apply_overrides(spec, args.override or [])
     seed = int(spec["seed"]) + args.fold
     torch.manual_seed(seed)
@@ -195,7 +276,10 @@ def run(args: Any) -> dict[str, Any]:
         io.ensure_dir(out_dir)
         logging.info("spec: %s", json.dumps(spec, indent=1))
 
-    reviews, records, splits = pipeline.load_split_data(paths)
+    reviews, records, splits = pipeline.load_split_data(
+        paths, pipeline.MODEL_RECORD_COLUMNS
+    )
+    guards.check_family_disjoint(splits)
     train_df, holdout_df = data_lib.training_frames(
         reviews,
         records,
@@ -212,6 +296,12 @@ def run(args: Any) -> dict[str, Any]:
         train_df = train_df[train_df["review_id"].isin(keep)].reset_index(
             drop=True
         )
+    # Defence in depth: the exact frames used for fitting and early stopping
+    # must share no fingerprint with val/test/eval/prospective/titan_test.
+    leak_audit = guards.check_training_frames(
+        train_df, holdout_df, records, splits
+    )
+    del records
     holdout_eval = data_lib.subsample_negatives(
         holdout_df, int(spec.get("eval_negatives_per_review", 1000)), "holdout"
     )
@@ -234,7 +324,10 @@ def run(args: Any) -> dict[str, Any]:
         )
     dataset = data_lib.ScreeningDataset(train_df, builder)
     optim_cfg = spec["optim"]
-    batch_size = int(optim_cfg["batch_size_per_gpu"])
+    batch_size = probe_batch_size(
+        model, spec, device, int(optim_cfg["batch_size_per_gpu"]), rank, world
+    )
+    optim_cfg["batch_size_per_gpu"] = batch_size
     if spec["sampler"].get("type") == "class_balanced":
         batch_sampler = sampler_lib.ClassBalancedBatchSampler(
             dataset.label_final, batch_size, seed, rank, world
@@ -271,7 +364,15 @@ def run(args: Any) -> dict[str, Any]:
         eps=1e-6,
         fused=device.type == "cuda",
     )
-    accum = int(optim_cfg.get("grad_accum", 1))
+    accum = spec_lib.grad_accum_steps(optim_cfg, world)
+    if main:
+        logging.info(
+            "hardware=%s micro-batch=%d x %d GPU(s) x accum %d",
+            spec.get("hardware", "-"),
+            batch_size,
+            world,
+            accum,
+        )
     epochs = int(optim_cfg["epochs"])
     steps_per_epoch = max(1, len(batch_sampler) // accum)
     total_steps = steps_per_epoch * epochs
@@ -303,6 +404,7 @@ def run(args: Any) -> dict[str, Any]:
     best, best_epoch, bad_epochs, step = -1.0, -1, 0, 0
     log_path = os.path.join(out_dir, "train_log.jsonl")
     started = time.time()
+    seen = 0
     for epoch in range(epochs):
         batch_sampler.set_epoch(epoch)
         ddp.train()
@@ -311,6 +413,7 @@ def run(args: Any) -> dict[str, Any]:
             batch = {
                 k: v.to(device, non_blocking=True) for k, v in batch.items()
             }
+            seen += int(batch["input_ids"].size(0)) * world
             sync = (i + 1) % accum == 0
             ctx = (
                 ddp.no_sync()
@@ -349,6 +452,7 @@ def run(args: Any) -> dict[str, Any]:
                     "loss": float(loss.detach()),
                     "lr": scheduler.get_last_lr()[0],
                     "elapsed_min": (time.time() - started) / 60,
+                    "seq_per_s": seen / max(1e-6, time.time() - started),
                     **parts,
                 }
                 logging.info("%s", entry)
@@ -392,6 +496,10 @@ def run(args: Any) -> dict[str, Any]:
         "best_metric": best,
         "metric": metric_name,
         "best_epoch": best_epoch,
+        "hardware": spec.get("hardware"),
+        "micro_batch": batch_size,
+        "grad_accum": accum,
+        "leakage_audit": leak_audit,
         "steps": step,
         "minutes": (time.time() - started) / 60,
     }

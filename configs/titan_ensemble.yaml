@@ -52,11 +52,14 @@ defaults:
     layer_decay: 0.9              # Layer-wise LR decay (LLRD).
     warmup_ratio: 0.06
     epochs: 3
-    batch_size_per_gpu: 32
-    grad_accum: 1
+    batch_size_per_gpu: 32        # Per-GPU micro-batch (hardware profiles
+                                  # shrink it); gradient accumulation keeps
+    effective_batch_size: 128     # this global batch on every machine.
     max_grad_norm: 1.0
     ema_decay: 0.999              # 0 disables EMA.
   gradient_checkpointing: false
+  auto_batch: true                # Halve the micro-batch on CUDA OOM probe.
+  base_dtype: fp32                # bf16 = frozen LoRA base kept in bf16.
   precision: bf16
   eval_negatives_per_review: 1000 # Holdout subsample for early stopping.
   early_stopping_metric: spec_at_99_recall
@@ -80,7 +83,7 @@ backbones:
     model_name: microsoft/deberta-v3-large
     max_seq_len: 512
     attn_implementation: eager    # DeBERTa has no SDPA/flash kernels.
-    optim: {lr: 1.0e-5, batch_size_per_gpu: 16, grad_accum: 2}
+    optim: {lr: 1.0e-5, batch_size_per_gpu: 16}
 
   biomedbert_large:
     model_name: microsoft/BiomedNLP-BiomedBERT-large-uncased-abstract
@@ -101,8 +104,49 @@ backbones:
     lora: {r: 32, alpha: 64, dropout: 0.05,
            target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj,
                             up_proj, down_proj]}
+    base_dtype: bf16
     optim: {lr: 1.0e-4, head_lr: 3.0e-4, layer_decay: 1.0,
-            batch_size_per_gpu: 8, grad_accum: 4, ema_decay: 0.0}
+            batch_size_per_gpu: 8, effective_batch_size: 256, ema_decay: 0.0}
+
+  # Small decoder reranker: fits a 12 GB consumer GPU.
+  qwen3_reranker_0_6b:
+    model_name: Qwen/Qwen3-Reranker-0.6B
+    max_seq_len: 1024
+    pooling: last
+    add_crit_token: false
+    attn_implementation: sdpa
+    gradient_checkpointing: true
+    budgets: {title: 96, objective: 128, criteria_total: 448,
+              criterion_max: 64, max_criteria: 16}
+    lora: {r: 32, alpha: 64, dropout: 0.05,
+           target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj,
+                            up_proj, down_proj]}
+    optim: {lr: 2.0e-4, head_lr: 3.0e-4, layer_decay: 1.0,
+            batch_size_per_gpu: 8, ema_decay: 0.0}
+
+  # Base-size encoders (TITAN-Open recipe): the "lite" ensemble for a single
+  # consumer GPU. Same backbones as the TITAN-SR baseline, so lite vs
+  # baseline isolates the method from model size.
+  modernbert_base:
+    model_name: answerdotai/ModernBERT-base
+    n_folds: 3
+    max_seq_len: 1024
+    attn_implementation: sdpa
+    budgets: {title: 64, objective: 128, criteria_total: 448,
+              criterion_max: 64, max_criteria: 16}
+    optim: {lr: 5.0e-5}
+
+  biolinkbert_base:
+    model_name: michiyasunaga/BioLinkBERT-base
+    n_folds: 3
+    max_seq_len: 512
+    optim: {lr: 3.0e-5}
+
+  pubmedbert_base:
+    model_name: microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext
+    n_folds: 3
+    max_seq_len: 512
+    optim: {lr: 3.0e-5}
 
   # ------------------------------------------------------------------------
   # Faithful re-implementation of the published TITAN-SR recipe (baseline):
@@ -119,8 +163,8 @@ backbones:
     loss: {type: weighted_bce, pos_weight: 10.0}
     sampler: {type: class_balanced}
     optim: {lr: 2.0e-5, head_lr: 2.0e-5, layer_decay: 1.0, epochs: 10,
-            batch_size_per_gpu: 64, grad_accum: 2, ema_decay: 0.0,
-            warmup_ratio: 0.1}
+            batch_size_per_gpu: 64, effective_batch_size: 128,
+            ema_decay: 0.0, warmup_ratio: 0.1}
     early_stopping_metric: auc
     patience: 3
 
@@ -133,8 +177,8 @@ backbones:
     loss: {type: weighted_bce, pos_weight: 10.0}
     sampler: {type: class_balanced}
     optim: {lr: 2.0e-5, head_lr: 2.0e-5, layer_decay: 1.0, epochs: 10,
-            batch_size_per_gpu: 64, grad_accum: 2, ema_decay: 0.0,
-            warmup_ratio: 0.1}
+            batch_size_per_gpu: 64, effective_batch_size: 128,
+            ema_decay: 0.0, warmup_ratio: 0.1}
     early_stopping_metric: auc
     patience: 3
 
@@ -146,7 +190,7 @@ backbones:
               criterion_max: 16, max_criteria: 4}
     n_folds: 2
     optim: {epochs: 3, lr: 1.0e-3, head_lr: 1.0e-3, layer_decay: 1.0,
-            batch_size_per_gpu: 32, ema_decay: 0.0}
+            batch_size_per_gpu: 32, effective_batch_size: 32, ema_decay: 0.0}
     eval_negatives_per_review: 50
     num_workers: 0
 
@@ -156,6 +200,11 @@ ensembles:
   # Adds the LoRA decoder reranker (needs H100s).
   titan_open_xl: [modernbert_large, biolinkbert_large, deberta_v3_large,
                   qwen3_reranker_4b]
+  # Single consumer GPU (RTX 3080 Ti, 12 GB): base encoders x 3 folds.
+  titan_open_lite: [modernbert_base, biolinkbert_base, pubmedbert_base]
+  # Large encoders on a 12 GB GPU (slow but fits; see docs/LOCAL_GPU.md).
+  titan_open_local: [modernbert_large, biolinkbert_large, deberta_v3_large,
+                     qwen3_reranker_0_6b]
   # TITAN-SR two-model 50/50 baseline (their reproducible variant).
   titan_sr_baseline: [titan_sr_pubmedbert, titan_sr_biolinkbert]
   smoke: [tiny]
@@ -166,5 +215,7 @@ ensembles:
 combiners:
   titan_open: stacking
   titan_open_xl: stacking
+  titan_open_lite: stacking
+  titan_open_local: stacking
   titan_sr_baseline: mean_sigmoid
   smoke: stacking
