@@ -24,7 +24,9 @@ dependencies = [
 [project.optional-dependencies]
 # Model training / inference (installed on Killarney GPU environments).
 train = [
-  "torch>=2.3",
+  # >= 2.6: transformers 5.x silently disables torch < 2.6 (peft then fails
+  # to import).
+  "torch>=2.6",
   "transformers>=4.51",
   "tokenizers>=0.19",
   "safetensors>=0.4",

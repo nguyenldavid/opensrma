@@ -52,6 +52,11 @@ defaults:
     layer_decay: 0.9              # Layer-wise LR decay (LLRD).
     warmup_ratio: 0.06
     epochs: 3
+    # Global batch = batch_size_per_gpu x grad_accum on ANY GPU count (osb
+    # train splits it over DDP ranks); batch_size_per_gpu is also the
+    # per-GPU memory ceiling. Keep the product when overriding for OOM.
+    # A recipe that cannot be split over the GPUs without changing review
+    # groups per step stops at startup (train.resolve_batching).
     batch_size_per_gpu: 32
     grad_accum: 1
     max_grad_norm: 1.0

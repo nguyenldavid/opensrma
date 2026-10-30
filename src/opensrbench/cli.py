@@ -131,6 +131,16 @@ def _cmd_evaluate(args) -> None:
     from opensrbench.evaluation import \
         report  # pylint: disable=import-outside-toplevel
 
+    if args.skip_preregistration_check:
+        print(
+            "\n" + "!" * 78 + "\n"
+            "WARNING: --skip-preregistration-check. Locked operating points\n"
+            "are NOT verified against datasets/manifests/ in git HEAD.\n"
+            "Development only: these results are not protocol results.\n"
+            + "!" * 78
+            + "\n",
+            file=sys.stderr,
+        )
     result = report.run(args)
     print(report.markdown_table(result))
 
@@ -248,6 +258,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--reference", default=None)
     p.add_argument("--replicates", type=int, default=None)
+    p.add_argument(
+        "--tag",
+        default=None,
+        help=(
+            "Write to reports/<benchmark>_T<k>_<tag>/ (e.g. secondary for"
+            " runs/systems_secondary/), keeping the primary report intact."
+        ),
+    )
+    p.add_argument(
+        "--skip-preregistration-check",
+        action="store_true",
+        help=(
+            "DEVELOPMENT ONLY: evaluate even if the locked operating points"
+            " are not committed under datasets/manifests/ (protocol §7)."
+        ),
+    )
     p.set_defaults(fn=_cmd_evaluate)
 
     p = sub.add_parser("doctor", help="Check environment readiness.")

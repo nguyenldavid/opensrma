@@ -140,6 +140,8 @@ def _write_configs(workdir: str, base_config: str) -> tuple[str, str]:
             "splits.titan_sr_test_as_benchmark": False,
             "evaluation.bootstrap_replicates": 300,
             "evaluation.reference_system": "smoke@tau99",
+            # Synthetic thresholds are never committed; skip the git gate.
+            "evaluation.require_preregistration": False,
         }
     )
     io.ensure_dir(workdir)

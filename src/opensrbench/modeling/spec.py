@@ -1,6 +1,5 @@
 """Resolution of per-backbone training specs from titan_ensemble.yaml."""
 
-import copy
 from typing import Any
 
 from opensrbench import config
@@ -10,13 +9,7 @@ def deep_merge(
     base: dict[str, Any], override: dict[str, Any]
 ) -> dict[str, Any]:
     """Recursively merges `override` into a copy of `base`."""
-    out = copy.deepcopy(base)
-    for key, value in (override or {}).items():
-        if isinstance(value, dict) and isinstance(out.get(key), dict):
-            out[key] = deep_merge(out[key], value)
-        else:
-            out[key] = copy.deepcopy(value)
-    return out
+    return config.deep_merge(base, override)
 
 
 def backbone_spec(ensemble_cfg: config.Config, backbone: str) -> dict[str, Any]:

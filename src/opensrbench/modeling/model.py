@@ -14,6 +14,12 @@ Heads on top of any Hugging Face backbone (encoder or decoder):
 `architecture: pooled` drops the criterion head (TITAN-SR baseline).
 The soft-min is numerically safe for rows with no markers: masked entries
 never enter the log-sum-exp and the global logit is used instead.
+
+Modules that would never receive a gradient are not built, so DDP can run
+with `find_unused_parameters=False`: the backbone's own pooler (pooling
+reads `last_hidden_state`) and, when the loss ignores the abstract-stage
+logit (`weighted_bce`), the abstract head and its gate; `logit_abs` then
+equals `logit_final`.
 """
 
 import json
@@ -101,9 +107,36 @@ def _load_backbone(spec: dict[str, Any], vocab_size: int) -> nn.Module:
             exc,
         )
         model = transformers.AutoModel.from_pretrained(name)
+    _drop_pooler(model)
     # transformers >= 5 loads checkpoints in their stored dtype (often bf16).
     # Keep fp32 master weights; bf16 compute comes from autocast.
     return model.float()
+
+
+def _drop_pooler(backbone: nn.Module) -> None:
+    """Removes a BERT-style pooler, which `TitanScreener` never uses.
+
+    Pooling reads `last_hidden_state`, so the pooler gets no gradient and
+    would make DDP (find_unused_parameters=False) fail. BERT/RoBERTa-family
+    `forward` skips a `None` pooler. Done after loading because
+    `add_pooling_layer` is not accepted by every `AutoModel` class.
+    """
+    if isinstance(getattr(backbone, "pooler", None), nn.Module):
+        backbone.pooler = None
+
+
+def uses_abs_head(spec: dict[str, Any]) -> bool:
+    """Whether the configured loss trains the abstract-stage logit."""
+    return spec.get("loss", {}).get("type", "hybrid") != "weighted_bce"
+
+
+def _is_dropped_key(key: str, model: "TitanScreener") -> bool:
+    """Checkpoint keys of modules no longer built (older checkpoints)."""
+    if key.startswith("encoder.") and ".pooler." in key:
+        return True
+    return not model.has_abs_head and (
+        key.startswith("global_abs_head.") or key == "gate_abs"
+    )
 
 
 class TitanScreener(nn.Module):
@@ -130,8 +163,10 @@ class TitanScreener(nn.Module):
         self.decomposed = spec.get("architecture", "decomposed") == "decomposed"
         self.softmin_temp = float(spec.get("softmin_temp", 4.0))
         self.dropout = nn.Dropout(dropout)
+        self.has_abs_head = uses_abs_head(spec)
         self.global_final_head = nn.Linear(hidden, 1)
-        self.global_abs_head = nn.Linear(hidden, 1)
+        if self.has_abs_head:
+            self.global_abs_head = nn.Linear(hidden, 1)
         if self.decomposed:
             self.criterion_head = nn.Sequential(
                 nn.Linear(hidden, hidden // 2),
@@ -140,7 +175,8 @@ class TitanScreener(nn.Module):
                 nn.Linear(hidden // 2, 1),
             )
             self.gate_final = nn.Parameter(torch.tensor(0.0))
-            self.gate_abs = nn.Parameter(torch.tensor(0.0))
+            if self.has_abs_head:
+                self.gate_abs = nn.Parameter(torch.tensor(0.0))
         types = getattr(self.encoder.config, "type_vocab_size", 0) or 0
         self.use_token_types = types > 1
 
@@ -173,11 +209,15 @@ class TitanScreener(nn.Module):
         hidden = self.encoder(**kwargs).last_hidden_state
         pooled = self.dropout(self._pool(hidden, attention_mask))
         global_final = self.global_final_head(pooled).squeeze(-1).float()
-        global_abs = self.global_abs_head(pooled).squeeze(-1).float()
+        global_abs = (
+            self.global_abs_head(pooled).squeeze(-1).float()
+            if self.has_abs_head
+            else None
+        )
         if not self.decomposed:
             return {
                 "logit_final": global_final,
-                "logit_abs": global_abs,
+                "logit_abs": global_final if global_abs is None else global_abs,
                 "logit_softmin": torch.zeros_like(global_final),
             }
         valid = crit_positions >= 0  # [B, K]
@@ -193,15 +233,18 @@ class TitanScreener(nn.Module):
         count = valid.sum(dim=1).clamp(min=1).to(z.dtype)
         softmin = -(torch.logsumexp(neg, dim=1) - torch.log(count)) / t
         g_final = torch.sigmoid(self.gate_final)
-        g_abs = torch.sigmoid(self.gate_abs)
         final = torch.where(
             has_crit,
             g_final * global_final + (1 - g_final) * softmin,
             global_final,
         )
-        abstract = torch.where(
-            has_crit, g_abs * global_abs + (1 - g_abs) * softmin, global_abs
-        )
+        if self.has_abs_head:
+            g_abs = torch.sigmoid(self.gate_abs)
+            abstract = torch.where(
+                has_crit, g_abs * global_abs + (1 - g_abs) * softmin, global_abs
+            )
+        else:
+            abstract = final
         return {
             "logit_final": final,
             "logit_abs": abstract,
@@ -307,6 +350,14 @@ def load_checkpoint(
     tokenizer = load_tokenizer(spec, path=ckpt_dir)
     model = TitanScreener(spec, tokenizer)
     state = st.load_file(os.path.join(ckpt_dir, "model.safetensors"))
+    dropped = [k for k in state if _is_dropped_key(k, model)]
+    if dropped:
+        logging.info(
+            "ignoring %d checkpoint tensors of unused modules: %s",
+            len(dropped),
+            dropped[:5],
+        )
+        state = {k: v for k, v in state.items() if k not in dropped}
     missing, unexpected = model.load_state_dict(state, strict=False)
     if unexpected:
         raise RuntimeError(f"unexpected keys in checkpoint: {unexpected[:5]}")

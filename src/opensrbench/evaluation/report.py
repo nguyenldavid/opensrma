@@ -6,7 +6,9 @@ Inputs
       system, review_id, record_id, decision_keep, is_valid_answer
       [, set, score, cost_usd]
 
-Outputs (under <runs>/reports/<benchmark>_T<k>/)
+Outputs (under <runs>/reports/<benchmark>_T<k>/, or <benchmark>_T<k>_<tag>/
+with --tag, e.g. "secondary" for the A19 secondary threshold set, so a
+secondary analysis never overwrites the primary report)
   leaderboard.json / leaderboard.md   Table 1 (equal-review J, Sens, Spec,
                                       IPW workload, 95% family-bootstrap CIs,
                                       paired deltas vs the reference, Holm).
@@ -16,11 +18,23 @@ Outputs (under <runs>/reports/<benchmark>_T<k>/)
                                       AUC, spec@95/99/99.5 recall, WSS@95).
   pareto.csv                          Figure 2: equal-review sensitivity vs
                                       work saved over a threshold sweep.
+
+Pre-registration gate (protocol §7): before any metric is computed, every
+calibrated ensemble behind the evaluated systems (`<ensemble>@<op>` and
+`cascade[<ensemble>->...]`) must have its
+<runs>/calibration/<ensemble>/locked_operating_points.json committed,
+byte-identical, in git HEAD under evaluation.preregistration_dir
+(slurm/preregister.sh does this). The outcome is recorded in
+leaderboard.json under "preregistration".
 """
 
+from collections.abc import Iterable
 import glob
+import hashlib
 import logging
 import os
+import re
+import subprocess
 from typing import Any
 
 import numpy as np
@@ -31,6 +45,161 @@ from opensrbench.evaluation import bootstrap
 from opensrbench.evaluation import metrics
 from opensrbench.evaluation import ranking
 from opensrbench.utils import io
+
+_CASCADE_SYSTEM = re.compile(r"cascade\[(?P<ensemble>.+?)->")
+_REPORT_TAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+
+
+class PreregistrationError(RuntimeError):
+    """Locked operating points were not committed before evaluation."""
+
+
+def calibrated_ensembles(system_names: Iterable[str]) -> list[str]:
+    """Returns the calibrated ensembles whose thresholds the systems use.
+
+    `osb calibrate` names systems `<ensemble>@<op>` and `osb cascade` names
+    them `cascade[<ensemble>-><verifier>]`; LLM systems (`<model>/<cond>`)
+    use no locked thresholds.
+
+    Args:
+      system_names: Names of the systems being evaluated.
+
+    Returns:
+      Sorted unique ensemble names.
+    """
+    out = set()
+    for name in system_names:
+        match = _CASCADE_SYSTEM.match(name)
+        if match:
+            out.add(match.group("ensemble"))
+        elif "@" in name:
+            out.add(name.split("@", 1)[0])
+    return sorted(out)
+
+
+def _git(args: list[str], cwd: str) -> bytes:
+    try:
+        return subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, check=True
+        ).stdout
+    except FileNotFoundError as err:
+        raise PreregistrationError("git is not installed") from err
+    except subprocess.CalledProcessError as err:
+        raise PreregistrationError(
+            f"git {' '.join(args)} failed in {cwd}: "
+            f"{err.stderr.decode(errors='replace').strip()}"
+        ) from err
+
+
+def committed_file_hashes(directory: str) -> tuple[str, dict[str, str]]:
+    """SHA-256 of every file committed in git HEAD under `directory`.
+
+    Content comes from the HEAD blobs, not the working tree, so a copy that
+    is untracked, only staged, or modified after the commit does not count.
+
+    Args:
+      directory: A directory inside a git work tree.
+
+    Returns:
+      (HEAD commit id, {repo-relative path: sha256 of the committed bytes}).
+
+    Raises:
+      PreregistrationError: If `directory` is not in a git work tree, the
+        repository has no commits, or git fails.
+    """
+    if not os.path.isdir(directory):
+        raise PreregistrationError(f"{directory} does not exist")
+    toplevel = _git(["rev-parse", "--show-toplevel"], directory).decode()
+    toplevel = toplevel.strip()
+    head = _git(["rev-parse", "--verify", "HEAD^{commit}"], toplevel)
+    rel = os.path.relpath(os.path.realpath(directory), toplevel)
+    listing = _git(["ls-tree", "-r", "-z", "HEAD", "--", rel], toplevel)
+    hashes = {}
+    for entry in filter(None, listing.split(b"\0")):
+        meta, path = entry.split(b"\t", 1)
+        _, kind, oid = meta.split()
+        if kind != b"blob":
+            continue
+        blob = _git(["cat-file", "blob", oid.decode()], toplevel)
+        hashes[path.decode()] = hashlib.sha256(blob).hexdigest()
+    return head.decode().strip(), hashes
+
+
+def check_preregistration(
+    runs_root: str, ensembles: Iterable[str], manifests_dir: str
+) -> dict[str, Any]:
+    """Verifies that locked operating points were committed before use.
+
+    Args:
+      runs_root: Runs root holding calibration/<ensemble>/.
+      ensembles: Calibrated ensembles being evaluated.
+      manifests_dir: Pre-registration directory (datasets/manifests).
+
+    Returns:
+      {"verified": True, "commit": HEAD id, "ensembles": {ensemble:
+      {"locked_sha256", "committed_as"}}}.
+
+    Raises:
+      PreregistrationError: If any ensemble's locked_operating_points.json is
+        missing or matches no file committed in HEAD under `manifests_dir`.
+    """
+    ensembles = list(ensembles)
+    problems, verified = [], {}
+    commit, committed = (None, {})
+    if ensembles:
+        commit, committed = committed_file_hashes(manifests_dir)
+    for ensemble in ensembles:
+        locked = os.path.join(
+            runs_root, "calibration", ensemble, "locked_operating_points.json"
+        )
+        if not os.path.isfile(locked):
+            problems.append(f"{ensemble}: {locked} does not exist")
+            continue
+        with open(locked, "rb") as fh:
+            digest = hashlib.sha256(fh.read()).hexdigest()
+        matches = sorted(p for p, h in committed.items() if h == digest)
+        if not matches:
+            problems.append(
+                f"{ensemble}: {locked} (sha256 {digest[:16]}...) matches no "
+                f"file committed in HEAD under {manifests_dir}"
+            )
+            continue
+        verified[ensemble] = {"locked_sha256": digest, "committed_as": matches}
+    if problems:
+        raise PreregistrationError(
+            "refusing to evaluate: locked operating points are not "
+            "pre-registered (protocol §7).\n  "
+            + "\n  ".join(problems)
+            + "\nCommit them first: bash slurm/preregister.sh "
+            + " ".join(ensembles)
+        )
+    return {"verified": True, "commit": commit, "ensembles": verified}
+
+
+def _preregistration_gate(
+    args: Any, eval_cfg: dict[str, Any], runs_root: str, names: Iterable[str]
+) -> dict[str, Any]:
+    """Runs the pre-registration check unless explicitly disabled."""
+    ensembles = calibrated_ensembles(names)
+    if getattr(args, "skip_preregistration_check", False):
+        reason = "--skip-preregistration-check"
+    elif not eval_cfg.get("require_preregistration", True):
+        reason = "evaluation.require_preregistration: false"
+    else:
+        return check_preregistration(
+            runs_root,
+            ensembles,
+            os.path.abspath(
+                eval_cfg.get("preregistration_dir", "datasets/manifests")
+            ),
+        )
+    logging.warning(
+        "PRE-REGISTRATION NOT VERIFIED (%s) for %s. These results are not "
+        "protocol results.",
+        reason,
+        ", ".join(ensembles) or "no calibrated ensembles",
+    )
+    return {"verified": False, "skipped_by": reason, "ensembles": ensembles}
 
 
 def _load_systems(
@@ -155,7 +324,15 @@ def evaluate(
 
 
 def markdown_table(result: dict[str, Any]) -> str:
-    lines = [
+    lines = []
+    prereg = result.get("preregistration")
+    if prereg and not prereg.get("verified"):
+        lines += [
+            "> **Pre-registration NOT verified** "
+            f"({prereg.get('skipped_by')}): not a protocol result.",
+            "",
+        ]
+    lines += [
         f"### Leaderboard on T{result['tier']} "
         f"(reference: {result['reference']})",
         "",
@@ -181,6 +358,29 @@ def markdown_table(result: dict[str, Any]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def report_dir(
+    runs_root: str, benchmark: str, tier: int, tag: str | None = None
+) -> str:
+    """Returns <runs>/reports/<benchmark>_T<tier>[_<tag>].
+
+    Args:
+      runs_root: Runs root.
+      benchmark: Frozen benchmark name.
+      tier: Tier k of T_k.
+      tag: Optional analysis label (e.g. "secondary"); None or "" for the
+        primary analysis.
+
+    Raises:
+      ValueError: If `tag` is not a plain name (letters, digits, `_.-`).
+    """
+    name = f"{benchmark}_T{tier}"
+    if tag:
+        if not _REPORT_TAG.fullmatch(tag):
+            raise ValueError(f"invalid report tag {tag!r}")
+        name += f"_{tag}"
+    return os.path.join(runs_root, "reports", name)
+
+
 def run(args: Any) -> dict[str, Any]:
     bench_cfg = config.Config.load(args.config)
     paths = config.Paths.from_config(bench_cfg)
@@ -188,8 +388,11 @@ def run(args: Any) -> dict[str, Any]:
     eval_cfg = bench_cfg.get("evaluation")
     tier = int(args.tier or bench_cfg.get("benchmark.primary_tier"))
     benchmark_dir = os.path.join(paths.frozen, args.benchmark)
+    tag = getattr(args, "tag", None)
+    out_dir = report_dir(runs_root, args.benchmark, tier, tag)
     patterns = args.systems or [os.path.join(runs_root, "systems", "*.parquet")]
     systems = _load_systems(patterns, args.benchmark)
+    preregistration = _preregistration_gate(args, eval_cfg, runs_root, systems)
     reference = args.reference or eval_cfg.get("reference_system")
     result = evaluate(
         benchmark_dir,
@@ -200,7 +403,9 @@ def run(args: Any) -> dict[str, Any]:
         int(eval_cfg["bootstrap_seed"]),
         float(eval_cfg.get("alpha", 0.05)),
     )
-    out_dir = os.path.join(runs_root, "reports", f"{args.benchmark}_T{tier}")
+    result["preregistration"] = preregistration
+    if tag:
+        result["tag"] = tag
     per_review = result.pop("per_review")
     io.write_json(result, os.path.join(out_dir, "leaderboard.json"))
     with open(

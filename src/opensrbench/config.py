@@ -3,6 +3,11 @@
 Configs are plain nested dicts wrapped in `Config` for attribute-free,
 explicit access (`cfg.get("cohort.k_min")`). Values like `${VAR}` or
 `${VAR:-default}` are expanded from the environment at load time.
+
+A file may start from another one with a top-level `extends: <path>`
+(relative to the file): its remaining keys are deep-merged onto that base,
+so an overlay such as configs/killarney/benchmark_pilot.yaml states only
+the keys it changes.
 """
 
 import copy
@@ -38,6 +43,50 @@ def _expand(value: Any) -> Any:
     return value
 
 
+def deep_merge(
+    base: dict[str, Any], override: dict[str, Any]
+) -> dict[str, Any]:
+    """Recursively merges `override` into a copy of `base`.
+
+    Nested dicts merge key by key; any other value (lists included)
+    replaces the base value.
+    """
+    out = copy.deepcopy(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = deep_merge(out[key], value)
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+def load_yaml(path: str, _seen: tuple[str, ...] = ()) -> dict[str, Any]:
+    """Reads a YAML file, resolving a top-level `extends:` chain.
+
+    Environment variables are not expanded here (see `Config.load`).
+
+    Args:
+      path: YAML file.
+      _seen: Files already on the `extends:` chain (cycle detection).
+
+    Returns:
+      The file's mapping deep-merged onto its base, without `extends`.
+
+    Raises:
+      ValueError: If the `extends:` chain loops.
+    """
+    real = os.path.realpath(path)
+    if real in _seen:
+        raise ValueError(f"`extends:` cycle: {' -> '.join(_seen + (real,))}")
+    with open(path, encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    base = data.pop("extends", None)
+    if base is None:
+        return data
+    base_path = os.path.join(os.path.dirname(path), base)
+    return deep_merge(load_yaml(base_path, _seen + (real,)), data)
+
+
 class Config:
     """Read-only view over a nested configuration dictionary."""
 
@@ -47,10 +96,8 @@ class Config:
 
     @classmethod
     def load(cls, path: str) -> "Config":
-        """Loads and env-expands a YAML file."""
-        with open(path, encoding="utf-8") as fh:
-            data = yaml.safe_load(fh) or {}
-        return cls(_expand(data), source=path)
+        """Loads a YAML file (following `extends:`) and env-expands it."""
+        return cls(_expand(load_yaml(path)), source=path)
 
     def get(self, dotted_key: str, default: Any = _MISSING) -> Any:
         """Returns a value by dotted path, e.g. "cohort.dense.enabled".

@@ -117,12 +117,20 @@ splits:
 calibration:
   target_sensitivities: [0.93, 0.95, 0.97, 0.99, 0.995]
   # pooled_conformal: finite-sample split-conformal bound on a random
-  #   positive's miss rate (protocol default).
+  #   positive's miss rate (record-pooled sensitivity; v1.1 primary, before
+  #   amendment A19).
   # equal_review: largest threshold whose equal-review validation
   #   sensitivity meets the target (matches the primary endpoint).
   # equal_review_lcb: as above but on the 5th percentile of a family
   #   bootstrap (most conservative).
-  threshold_method: pooled_conformal
+  # Primary method (protocol amendment A19): the primary endpoint is
+  # equal-review sensitivity, which pooled_conformal under-covers.
+  threshold_method: equal_review_lcb
+  # Pre-specified secondary threshold sets, locked on the same validation
+  # scores and stored under "secondary" in locked_operating_points.json
+  # (decision files in <runs>/systems_secondary/). Never used by the
+  # primary analysis or the cascade.
+  secondary_threshold_methods: [pooled_conformal]
   cross_fit_folds: 5
   positive_class_weight: 5.0
   meta_c: 1.0
@@ -132,6 +140,13 @@ evaluation:
   bootstrap_seed: 20261025
   reference_system: titan_sr_baseline@tau99
   alpha: 0.05
+  # Pre-registration gate (protocol §7): `osb evaluate` refuses to score a
+  # calibrated ensemble unless its locked_operating_points.json is
+  # byte-identical to a file committed (git HEAD) under preregistration_dir.
+  # Create that commit with slurm/preregister.sh. Relative paths resolve
+  # against the working directory (the repo root; slurm/env.sh cds there).
+  require_preregistration: true
+  preregistration_dir: datasets/manifests
 
 # Optional LLM used for Tier-2 query synthesis when
 # cohort.query_generator = llm (e.g. gpt-oss-20b served by vLLM on Killarney).

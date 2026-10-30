@@ -1,0 +1,26 @@
+# TITAN-Open ensemble — KILLARNEY L40S PILOT overlay.
+#
+# Only the keys below differ from the protocol file named by `extends:`;
+# every backbone keeps its protocol settings (max_seq_len incl. ModernBERT's
+# 1024 tokens and segment budgets, batch_size_per_gpu, grad_accum, LR,
+# epochs, early stopping, no gradient checkpointing), and the ensembles and
+# combiners are the protocol's own:
+#   titan_open        = [modernbert_large, biolinkbert_large,
+#                        deberta_v3_large]               (stacking)
+#   titan_sr_baseline = [titan_sr_pubmedbert, titan_sr_biolinkbert]
+#                                                        (mean_sigmoid)
+# slurm/pilot_l40s.sh resolves this file onto the protocol one (see
+# configs/killarney/benchmark_pilot.yaml). Its OPEN_MEMBERS / SR_MEMBERS
+# environment variables replace an ensemble's member list in the resolved
+# copy (logged as a deviation); by default nothing is replaced.
+#
+# Each backbone trains on ONE L40S (world_size 1). The global batch is
+# batch_size_per_gpu x grad_accum on any GPU count (osb train splits it over
+# DDP ranks), e.g. TITAN-SR's published 128 for the baseline members.
+
+extends: ../titan_ensemble.yaml
+
+# KILLARNEY PILOT: 1 (protocol: 5). One model per backbone; the 5% family
+# holdout (holdout_fraction) drives early stopping, so validation stays
+# reserved for calibration. The TITAN-SR baseline members already use 1.
+n_folds: 1

@@ -23,7 +23,7 @@ end on the **Killarney** cluster (Vector Institute / PAICE).
 | [DATASETS.md](DATASETS.md) | Every training/evaluation dataset: provenance, licence, labels, counts, caveats |
 | [docs/PIPELINE.md](docs/PIPELINE.md) | Stage-by-stage reference, data schema, outputs, resumability |
 | [docs/METHODS.md](docs/METHODS.md) | Model, losses, calibration, statistics; why it beats TITAN-SR; ablations |
-| [docs/PROTOCOL.md](docs/PROTOCOL.md) | Study protocol v1.1 (TRIPOD+AI / STARD-AI) with all amendments to v1.0 |
+| [docs/PROTOCOL.md](docs/PROTOCOL.md) | Study protocol v1.2 (TRIPOD+AI / STARD-AI) with all amendments (A1–A21) |
 | [CLAUDE.md](CLAUDE.md) | Team context, invariants and conventions for contributors and agents |
 
 ## Quick start

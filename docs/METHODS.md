@@ -35,7 +35,7 @@ same-data test.
 | D7 | **Review-grouped hard-negative sampler**. | Makes the ranking loss meaningful; half the negatives are full-text exclusions or top-ranked retrieval neighbours. |
 | D8 | **Large, diverse ensemble**: ModernBERT-large, BioLinkBERT-large, DeBERTa-v3-large × 5 family folds (+ Qwen3-Reranker-4B LoRA in `titan_open_xl`), LLRD, EMA, bf16. | Variance reduction exactly where tails matter; decoder rerankers are the current state of the art for relevance. |
 | D9 | **Review-conditional stacking** (within-review z-scores, rank percentiles, fold and cross-model dispersion, cohort size), cross-fitted on validation families. | Raw scores are not comparable across reviews; normalising within each candidate pool is the main lever against the 99.5% specificity collapse. |
-| D10 | **Exact split-conformal thresholds** (or equal-review / LCB variants) locked on out-of-fold validation scores. | Finite-sample sensitivity guarantee without optimistic bias; no post-hoc operating points. |
+| D10 | **Equal-review LCB thresholds** (primary, protocol A19; exact split-conformal `pooled_conformal` as pre-specified secondary) locked on out-of-fold validation scores. | Finite-sample sensitivity guarantee without optimistic bias; no post-hoc operating points. |
 | D11 | **Two-stage cascade** to a local gpt-oss-20b verifier for the gray zone. | Spends LLM compute only where the encoder is uncertain; zero API cost on Killarney. |
 
 ## 3. Model details
@@ -72,10 +72,17 @@ specificity at 99% recall on the held-out family fold.
 2. A class-weighted logistic stacker is cross-fitted on validation families
    (5 folds); thresholds are locked on its out-of-fold scores; the final
    stacker is refit on all validation data and applied to held-out sets.
-3. `pooled_conformal`: τ = s_(k), k = ⌊(n+1)α⌋ of the sorted validation
-   positive scores ⇒ P(miss) ≤ α for a new exchangeable positive. With too
-   few positives (k = 0) τ = −∞ (keep everything) — the pipeline reports
-   this rather than pretending to certify the target.
+3. Primary (`equal_review_lcb`, protocol A19): for each target, the
+   largest τ whose 5th percentile of equal-review validation sensitivity
+   over 1,000 family-bootstrap replicates meets the target, matching the
+   equal-review primary endpoint. Pre-specified secondary
+   (`pooled_conformal`, the v1.1 primary): τ = s_(k), k = ⌊(n+1)α⌋ of the
+   sorted validation positive scores ⇒ P(miss) ≤ α for a new exchangeable
+   positive (record-pooled, not equal-review, sensitivity). With too few
+   positives (k = 0) τ = −∞ (keep everything) — the pipeline reports this
+   rather than pretending to certify the target. Both sets are locked in
+   the same call and pre-registered together; secondary decisions are
+   reported separately (`reports/<benchmark>_T<k>_secondary/`).
 4. Operating points: τ93, τ95, τ97, τ99, τ99.5 and τJ (equal-review
    Youden-optimal), all locked before unblinding.
 

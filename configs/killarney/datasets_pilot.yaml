@@ -1,0 +1,32 @@
+# KILLARNEY L40S PILOT overlay of configs/datasets.yaml.
+#
+# Only the two sources that make up TITAN-SR's own training/test corpus stay
+# enabled: the TITAN-SR manifests (PMC + Track B + split + external holdout)
+# and Chan et al. 2024 (the "chan_" reviews of TITAN-SR's split). Both
+# TITAN-Open and the TITAN-SR baseline therefore train on the data TITAN-SR
+# used, and no Open-SR-Bench harvest runs. Every other source inherits its
+# protocol block from `extends:` with only `enabled` switched off (marked
+# "KILLARNEY PILOT:"; protocol: true). slurm/pilot_l40s.sh resolves this
+# file onto the protocol one (see configs/killarney/benchmark_pilot.yaml)
+# and refuses to run if any other source ends up enabled
+# (opensrbench.pilot.check_datasets).
+
+extends: ../datasets.yaml
+
+sources:
+  clef_tar:
+    enabled: false                 # KILLARNEY PILOT: off (protocol: true).
+  synergy:
+    enabled: false                 # KILLARNEY PILOT: off (protocol: true).
+  cohen2006:
+    enabled: false                 # KILLARNEY PILOT: off (protocol: true).
+  swift2016:
+    enabled: false                 # KILLARNEY PILOT: off (protocol: true).
+  sas2010:
+    enabled: false                 # KILLARNEY PILOT: off (protocol: true).
+  sigir2017:
+    enabled: false                 # KILLARNEY PILOT: off (protocol: true).
+  pmc_harvest:
+    # KILLARNEY PILOT: off (protocol: true). The Open-SR-Bench harvest is
+    # the multi-day full-protocol job.
+    enabled: false

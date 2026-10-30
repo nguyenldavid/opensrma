@@ -9,6 +9,10 @@ Outputs (under runs/<ensemble-agnostic>/<backbone>/fold<k>/):
                    held-out fold (safetensors + tokenizer + screener.json).
   holdout_preds.parquet  Out-of-fold scores of the best checkpoint.
   train_log.jsonl  Step/epoch metrics.  summary.json  Final summary.
+
+The global (effective) batch is `optim.batch_size_per_gpu x optim.grad_accum`
+as written in the YAML, whatever the number of GPUs, so a recipe means the
+same thing on 1 GPU, 4 x L40S or 8 x H100 (see `resolve_batching`).
 """
 
 import contextlib
@@ -176,6 +180,93 @@ def apply_overrides(
     return spec
 
 
+def resolve_batching(
+    optim_cfg: dict[str, Any], world: int, min_micro_batch: int = 1
+) -> tuple[int, int, int]:
+    """Splits the configured global batch over `world` ranks.
+
+    The global batch is `batch_size_per_gpu * grad_accum` (the YAML values,
+    i.e. the single-GPU recipe). Each rank processes `global / world`
+    examples per optimizer step as `accum` micro-batches of `micro` rows,
+    with the fewest micro-batches whose size stays <= `batch_size_per_gpu`
+    (a memory ceiling). When `grad_accum` is divisible by `world` this keeps
+    `micro == batch_size_per_gpu` and `accum == grad_accum / world`; with
+    one rank nothing changes.
+
+    Args:
+      optim_cfg: The spec's `optim` block.
+      world: Number of DDP ranks.
+      min_micro_batch: Review-group size of the review-grouped sampler (1
+        for samplers that draw single rows). That sampler packs whole groups
+        of up to `min_micro_batch` rows into a micro-batch, so the number of
+        groups per optimizer step, not the row count, must be unchanged.
+
+    Returns:
+      (micro_batch_per_rank, grad_accum_per_rank, global_batch).
+
+    Raises:
+      ValueError: If the global batch cannot be split evenly over `world`
+        ranks, or (grouped sampler) only with micro-batches below
+        `min_micro_batch` or with a different number of review groups per
+        optimizer step than on one GPU.
+    """
+    per_gpu = int(optim_cfg["batch_size_per_gpu"])
+    global_batch = per_gpu * int(optim_cfg.get("grad_accum", 1))
+    if global_batch % world:
+        raise ValueError(
+            f"global batch {global_batch} (batch_size_per_gpu {per_gpu} x "
+            f"grad_accum {optim_cfg.get('grad_accum', 1)}) is not divisible "
+            f"by {world} GPUs; change optim.grad_accum or the GPU count."
+        )
+    per_rank = global_batch // world
+    accum = math.ceil(per_rank / per_gpu)
+    while per_rank % accum:
+        accum += 1
+    micro = per_rank // accum
+
+    # A micro-batch of `rows` rows holds max(1, rows // group) whole review
+    # groups, so compare groups per optimizer step with the 1-GPU recipe.
+    def groups(rows: int) -> int:
+        return max(1, rows // min_micro_batch)
+
+    recipe_groups = groups(per_gpu) * int(optim_cfg.get("grad_accum", 1))
+    if micro < min(per_gpu, min_micro_batch) or (
+        groups(micro) * accum * world != recipe_groups
+    ):
+        raise ValueError(
+            f"global batch {global_batch} over {world} GPUs leaves "
+            f"{accum} micro-batch(es) of {micro} rows per GPU, i.e. "
+            f"{groups(micro) * accum * world} review groups of "
+            f"{min_micro_batch} per optimizer step instead of the recipe's "
+            f"{recipe_groups} (whole review groups); change optim.grad_accum "
+            "(this changes the recipe) or use fewer GPUs."
+        )
+    return micro, accum, global_batch
+
+
+def wrap_ddp(
+    model: torch.nn.Module,
+    spec: dict[str, Any],
+    device: torch.device,
+    world: int,
+) -> torch.nn.Module:
+    """Wraps `model` in DDP when `world > 1` (identity otherwise).
+
+    `TitanScreener` builds no module without a gradient path (no backbone
+    pooler; no abstract head under `weighted_bce`), so DDP runs with
+    `find_unused_parameters=False` (no extra graph traversal per step).
+    """
+    if world == 1:
+        return model
+    return torch_parallel.DistributedDataParallel(
+        model,
+        device_ids=[device.index] if device.type == "cuda" else None,
+        # PEFT-wrapped decoders are not yet verified under DDP; keep the
+        # safe (slower) unused-parameter search for LoRA specs only.
+        find_unused_parameters=bool(spec.get("lora")),
+    )
+
+
 def run(args: Any) -> dict[str, Any]:
     """Trains one (backbone, fold). `args` comes from the CLI parser."""
     rank, _, world, device = distributed.setup()
@@ -194,6 +285,22 @@ def run(args: Any) -> dict[str, Any]:
     if main:
         io.ensure_dir(out_dir)
         logging.info("spec: %s", json.dumps(spec, indent=1))
+    # Resolved before any data/model loading so a bad split fails fast.
+    optim_cfg = spec["optim"]
+    class_balanced = spec["sampler"].get("type") == "class_balanced"
+    batch_size, accum, global_batch = resolve_batching(
+        optim_cfg,
+        world,
+        1 if class_balanced else int(spec["sampler"].get("group_size", 16)),
+    )
+    if main:
+        logging.info(
+            "global batch %d = %d GPU(s) x micro-batch %d x grad_accum %d",
+            global_batch,
+            world,
+            batch_size,
+            accum,
+        )
 
     reviews, records, splits = pipeline.load_split_data(paths)
     train_df, holdout_df = data_lib.training_frames(
@@ -233,9 +340,7 @@ def run(args: Any) -> dict[str, Any]:
             "parameters: %s total, %s trainable", f"{total:,}", f"{trainable:,}"
         )
     dataset = data_lib.ScreeningDataset(train_df, builder)
-    optim_cfg = spec["optim"]
-    batch_size = int(optim_cfg["batch_size_per_gpu"])
-    if spec["sampler"].get("type") == "class_balanced":
+    if class_balanced:
         batch_sampler = sampler_lib.ClassBalancedBatchSampler(
             dataset.label_final, batch_size, seed, rank, world
         )
@@ -271,7 +376,6 @@ def run(args: Any) -> dict[str, Any]:
         eps=1e-6,
         fused=device.type == "cuda",
     )
-    accum = int(optim_cfg.get("grad_accum", 1))
     epochs = int(optim_cfg["epochs"])
     steps_per_epoch = max(1, len(batch_sampler) // accum)
     total_steps = steps_per_epoch * epochs
@@ -292,13 +396,7 @@ def run(args: Any) -> dict[str, Any]:
         if float(optim_cfg.get("ema_decay", 0)) > 0
         else None
     )
-    ddp = model
-    if world > 1:
-        ddp = torch_parallel.DistributedDataParallel(
-            model,
-            device_ids=[device.index] if device.type == "cuda" else None,
-            find_unused_parameters=bool(spec.get("lora")),
-        )
+    ddp = wrap_ddp(model, spec, device, world)
     metric_name = spec.get("early_stopping_metric", "spec_at_99_recall")
     best, best_epoch, bad_epochs, step = -1.0, -1, 0, 0
     log_path = os.path.join(out_dir, "train_log.jsonl")

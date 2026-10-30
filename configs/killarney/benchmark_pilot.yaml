@@ -1,0 +1,34 @@
+# Open-SR-Bench v1 — KILLARNEY L40S PILOT overlay (TITAN-SR + Chan only).
+#
+# Only the keys below differ from the protocol file named by `extends:`;
+# everything else is inherited unchanged, in particular `calibration`
+# (threshold_method and the secondary methods), `evaluation` (including the
+# pre-registration gate), `splits` and the frozen-tier salts. Every changed
+# key is marked "KILLARNEY PILOT:" with the protocol value.
+#
+# The config loader (`opensrbench.config`) follows `extends:`, so this file
+# also loads directly. slurm/pilot_l40s.sh nevertheless writes the resolved
+# copy to $OSB_PILOT_ROOT/configs/benchmark.yaml (checked by
+# opensrbench.pilot; refuses to change mid-pilot), which every pilot job uses
+# as --config. Data and runs live under $OSB_PILOT_ROOT (set by that script
+# through OSB_DATA_ROOT / OSB_RUNS_ROOT), apart from any protocol run.
+#
+# Results from this config are a pilot on TITAN-SR's own test split, not the
+# protocol run. See "Quick start: L40S pilot" in docs/KILLARNEY.md.
+
+extends: ../benchmark_v1.yaml
+
+network:
+  # KILLARNEY PILOT: 500 / 3 (protocol: 200 / 1), as in the local pilot.
+  # Throughput only: the same PMIDs are fetched under the same rate limit;
+  # concurrent POST batches hide the ~5 s EFetch latency (~360k PMIDs:
+  # ~30-60 min instead of ~2-3 h).
+  efetch_batch_size: 500
+  efetch_workers: 3
+
+cohort:
+  # KILLARNEY PILOT: false (protocol: true). Augmenting ~10k legacy pools
+  # needs ~10M PubMed fetches (days). Without it, titan_test keeps
+  # TITAN-SR's own candidate lists, i.e. exactly their evaluation setup
+  # (same choice as the local 3080 Ti pilot).
+  augment_incomplete_pools: false

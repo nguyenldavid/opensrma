@@ -8,6 +8,11 @@ reviews — are the unit of splitting and of the cluster bootstrap.
 Included studies are matched by their normalized-title fingerprint (falling
 back to PMID), so overlaps are detected even between sources that have no
 PMIDs (e.g. Chan 2024 vs CLEF TAR).
+
+A review whose title + objective is (near-)empty gets no cosine edges: all
+empty texts embed to the same vector, so the cosine criterion would chain
+every such review into one clique although they share no topic. Its overlap
+edges are unaffected.
 """
 
 import collections
@@ -19,6 +24,10 @@ import numpy as np
 import pandas as pd
 
 from opensrbench.utils import hashing
+
+# Reviews whose stripped title + objective is shorter than this carry no
+# topical signal and never get cosine edges (overlap edges still apply).
+MIN_COSINE_TEXT_CHARS = 20
 
 
 class UnionFind:
@@ -110,6 +119,21 @@ def embedding_edges(
     return edges
 
 
+def cosine_text(reviews: pd.DataFrame) -> pd.Series:
+    """The text embedded for the cosine criterion: title + objective."""
+    return reviews["title"].fillna("") + ". " + reviews["objective"].fillna("")
+
+
+def has_topic_text(reviews: pd.DataFrame) -> pd.Series:
+    """True where title + objective reach `MIN_COSINE_TEXT_CHARS`."""
+    content = (
+        reviews["title"].fillna("").str.strip()
+        + " "
+        + reviews["objective"].fillna("").str.strip()
+    ).str.strip()
+    return content.str.len() >= MIN_COSINE_TEXT_CHARS
+
+
 def tfidf_embed(texts: Sequence[str]) -> np.ndarray:
     """CPU fallback embedder (TF-IDF, dense; fine up to ~50k reviews)."""
     from sklearn.feature_extraction import \
@@ -141,6 +165,7 @@ def build_families(
       overlap_threshold: Positive-overlap coefficient threshold.
       cosine_threshold: Objective-embedding cosine threshold.
       embed_fn: texts -> embeddings; None disables the cosine criterion.
+        Reviews without topic text (`has_topic_text`) get no cosine edges.
 
     Returns:
       (frame with review_id, family_id, family_size; statistics dict).
@@ -151,11 +176,24 @@ def build_families(
     for a, b in edges:
         forest.union(a, b)
     n_cos = 0
+    topical = has_topic_text(reviews).to_numpy()
+    n_no_text = int((~topical).sum())
     if embed_fn is not None:
-        texts = (
-            reviews["title"].fillna("") + ". " + reviews["objective"].fillna("")
-        ).tolist()
-        cos_edges = embedding_edges(ids, embed_fn(texts), cosine_threshold)
+        if n_no_text:
+            logging.warning(
+                "%d reviews have < %d chars of title + objective; they get "
+                "no cosine edges (overlap edges only).",
+                n_no_text,
+                MIN_COSINE_TEXT_CHARS,
+            )
+        # Embed every review (so embeddings do not depend on the guard), then
+        # link only the reviews that carry topic text.
+        emb = np.asarray(embed_fn(cosine_text(reviews).tolist()))
+        cos_edges = embedding_edges(
+            [i for i, keep in zip(ids, topical) if keep],
+            emb[topical],
+            cosine_threshold,
+        )
         n_cos = len(cos_edges)
         for a, b in cos_edges:
             forest.union(a, b)
@@ -175,6 +213,7 @@ def build_families(
         "reviews": len(ids),
         "overlap_edges": len(edges),
         "cosine_edges": n_cos,
+        "no_cosine_text": n_no_text,
         "families": int(frame["family_id"].nunique()),
         "largest_family": int(frame["family_size"].max()),
     }

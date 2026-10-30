@@ -1,4 +1,4 @@
-# Study Protocol & Technical Specification — v1.1
+# Study Protocol & Technical Specification — v1.2
 
 **Title:** *Open-SR-Bench: A Prospective, Leak-Audited Benchmark and
 Decomposed Cross-Encoder Architecture for Automated Title-and-Abstract
@@ -9,7 +9,11 @@ Screening in Systematic Reviews*
 *The Lancet Digital Health*, *Journal of Clinical Epidemiology*.
 
 v1.1 keeps every element of v1.0 and records each change as an amendment
-(§9). Every section names the code that implements it.
+(§9, A1–A18). v1.2 = v1.1 + A19–A21, added on 2026-10-30, after the local
+pilot ([LOCAL_RUN.md](LOCAL_RUN.md)) and before any Killarney run (§9.1).
+The local pilot ran under **v1.1** (primary thresholds `pooled_conformal`;
+operating points committed in `1ee734e`); every later run uses v1.2. Every
+section names the code that implements it.
 
 ---
 
@@ -69,7 +73,9 @@ pub-date − 90 d), C_r = P_r ∪ N_r with PDAT ≤ t_r:
 ### 2.4 Families and zero-leakage audit (`splits/`)
 * Edge (u, v) if |P_u ∩ P_v| / min(|P_u|, |P_v|) ≥ 0.10 or
   cos(Embed(Obj_u), Embed(Obj_v)) ≥ 0.88 (MedCPT); positives matched by
-  title fingerprint or PMID.
+  title fingerprint or PMID. A review whose stripped title + objective is
+  shorter than 20 characters gets no cosine edges; its overlap edges are
+  unchanged (A21).
 * Connected components are assigned atomically: temporal families to
   Train 75% / Val 10% / Eval 15%; legacy families to Train/Val; families
   with prospective or TITAN-SR-test members to those partitions (A7).
@@ -103,6 +109,8 @@ missing decisions (e.g. budget exhaustion, A14) count as keep and invalid.
 (shared across systems); paired ΔJ with two-sided bootstrap p-values,
 Holm-Bonferroni adjusted. All thresholds τ93, τ95, τ97, τ99, τ99.5 and τJ
 are locked on validation (out-of-fold stacked scores, A5) before unblinding.
+Primary targets use `equal_review_lcb` (A19); `pooled_conformal` thresholds
+are locked at the same time as a pre-specified secondary set.
 
 ## 4. Evaluation conditions (`llm/`, `cascade.py`)
 
@@ -150,6 +158,13 @@ seed = 1; percentage agreement and Cohen's κ are reported.
    `locked_operating_points.json`.
 3. Only then run `osb evaluate` on held-out benchmarks.
 
+Steps 1–2 are `bash slurm/preregister.sh <ensemble>...` (RUN_TAG names the
+copies, default `killarney`; local commit, pushed from the login node), run
+by `slurm/calibrate_eval.sbatch` between calibrate and evaluate. Step 3 is
+enforced (A20): `osb evaluate` refuses to score an ensemble whose
+`locked_operating_points.json` is not byte-identical to a file committed in
+git HEAD under `datasets/manifests/`.
+
 ## 8. Limitations
 
 Harvested labels inherit the reviews' own reporting; included-study
@@ -157,7 +172,9 @@ parsing and Tier-2 reconstruction are automatic and imperfect (quantified by
 `pool_recall` and the harvest audit); open-access reviews may differ from
 paywalled ones; TITAN-SR's external holdout is title-only.
 
-## 9. Amendments to v1.0
+## 9. Amendments
+
+A1–A18 amend v1.0 and form v1.1; A19–A21 form v1.2.
 
 | # | Amendment | Rationale |
 |---|---|---|
@@ -179,3 +196,61 @@ paywalled ones; TITAN-SR's external holdout is title-only.
 | A16 | Cao et al. prompt must be pasted verbatim; the runner refuses a placeholder | no paraphrased "exact" baselines |
 | A17 | Leakage audit raises `LeakageError` instead of `assert` | asserts vanish under `python -O` |
 | A18 | Pool augmentation for cited-reference sources (TITAN-SR, Chan, SIGIR) with title-fingerprint guards | realistic prevalence without label noise |
+| A19 | Primary threshold method `pooled_conformal` → `equal_review_lcb`; `pooled_conformal` kept as a pre-specified secondary set (§9.1) | the primary endpoint is equal-review sensitivity; pooled thresholds certify record-pooled sensitivity and under-cover it on validation |
+| A20 | Pre-registration enforced: `osb evaluate` checks that each `locked_operating_points.json` is committed in git HEAD (§7) | step 3 of §7 was procedural only; the v1.1 job evaluated in the same job as calibration with failures ignored |
+| A21 | Reviews whose stripped title + objective is shorter than 20 characters get no cosine edges in the family graph (§2.4); overlap edges unchanged; their count is reported as `families.no_cosine_text` in `splits/audit.json` (`splits/families.py`) | all near-empty texts embed to the same vector, so 2,171 reviews without title (TITAN-SR Track B) formed one cosine clique in the local pilot |
+
+### 9.1 A19 — threshold method for the primary operating points
+
+*Decided 2026-10-30, before any Killarney calibration.*
+
+**Change.** `calibration.threshold_method` in `configs/benchmark_v1.yaml`
+changes from `pooled_conformal` to `equal_review_lcb`: for each target
+(93, 95, 97, 99, 99.5%), the largest τ whose 5th percentile of
+equal-review validation sensitivity over 1,000 family-bootstrap replicates
+(seed 0) meets the target (`calibration/thresholds.py`). τJ is unchanged.
+`pooled_conformal` thresholds are locked on the same out-of-fold validation
+scores in the same `osb calibrate` call and stored under
+`"secondary": {"pooled_conformal": ...}` in `locked_operating_points.json`,
+so they are pre-registered together with the primary set. Their decision
+files go to `runs/systems_secondary/`; the primary analysis, its Holm family
+and the cascade use only the primary set. `locked_operating_points.json`
+records the target and the achieved validation equal-review sensitivity of
+every threshold.
+
+**Why.** Unit mismatch: the primary endpoint (§3.2) averages sensitivity
+over reviews, whereas `pooled_conformal` certifies the miss rate of a
+randomly drawn positive, i.e. record-pooled sensitivity. Reviews with few
+positives weigh more in the equal-review mean, so a pooled guarantee does
+not carry over. Evidence, from **validation data only** (the local pilot's
+out-of-fold validation scores, `set == "val"` rows of
+`runs/calibration/<ensemble>/scored.parquet`: 282 reviews, 3,764
+positives; no held-out data):
+* At every locked pooled threshold, equal-review validation sensitivity was
+  below its target, e.g. τ99: 0.985 (TITAN-SR baseline) and 0.987
+  (TITAN-Open, local members).
+* Exploratory family half-splits of validation (lock on one half, measure
+  equal-review sensitivity on the other; TITAN-SR baseline and a
+  cross-fitted TITAN-Open stack): over 400 splits, pooled thresholds missed
+  the target in 53–81% of splits, the range over the five targets and both
+  systems. In a separate run of 100 splits, `equal_review_lcb` (300
+  bootstrap replicates instead of 1,000, locked on half the data) missed
+  in 13–26% and pooled thresholds in 59–83%. These analyses were
+  exploratory and their scripts are not part of the repository.
+
+**Scope.** The change applies identically to both systems (TITAN-Open and
+the TITAN-SR baseline: same method, targets and bootstrap settings) and to
+every benchmark. `pooled_conformal` remains a pre-specified secondary
+analysis and is reported as such.
+
+**Timing and the local pilot.** A19 was decided after the local pilot's
+`titan_test` evaluation (operating points committed in `1ee734e`; results
+in [LOCAL_RUN.md](LOCAL_RUN.md), which reported that achieved `titan_test`
+(held-out) sensitivity was below every locked target). That held-out
+observation preceded this amendment; the rationale above uses validation
+evidence only. The pilot's primary results remain as originally specified
+(v1.1, `pooled_conformal`; `configs/local/` is unchanged). Because the
+`titan_test` split was unblinded in that pilot, any `titan_test` report
+under A19 must disclose that the method was chosen after that unblinding.
+Open-SR-Bench (`eval`) has not been evaluated and remains the untouched
+primary benchmark.
