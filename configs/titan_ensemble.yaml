@@ -91,6 +91,23 @@ backbones:
     model_name: microsoft/BiomedNLP-BiomedBERT-large-uncased-abstract
     max_seq_len: 512
 
+  # ModernBERT-large with continued pretraining on PubMed + clinical text
+  # (Sounack et al. 2025; MIT); 8,192-token context. Screened at 1024
+  # tokens (long-context budgets) and at 512 (same budgets as the BERTs).
+  bioclinical_modernbert_large:
+    model_name: thomas-sounack/BioClinical-ModernBERT-large
+    max_seq_len: 1024
+    attn_implementation: flash_attention_2   # Falls back to sdpa if absent.
+    budgets: {title: 64, objective: 128, criteria_total: 448,
+              criterion_max: 64, max_criteria: 16}
+    optim: {lr: 3.0e-5, batch_size_per_gpu: 24}
+
+  bioclinical_modernbert_large_512:
+    model_name: thomas-sounack/BioClinical-ModernBERT-large
+    max_seq_len: 512
+    attn_implementation: flash_attention_2   # Falls back to sdpa if absent.
+    optim: {lr: 3.0e-5, batch_size_per_gpu: 32}
+
   # Decoder cross-encoder (state-of-the-art reranker family), LoRA-tuned.
   # Criteria markers are placed after each criterion and read with causal
   # attention, so the document is put first (see modeling/inputs.py).

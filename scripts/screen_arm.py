@@ -26,6 +26,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--max-steps", type=int, default=1500)
     parser.add_argument(
+        "--override",
+        action="append",
+        default=[],
+        help="Extra spec override, applied after the screen defaults.",
+    )
+    parser.add_argument(
         "--config", default="configs/local/benchmark_3080ti.yaml"
     )
     parser.add_argument(
@@ -49,6 +55,7 @@ def main() -> None:
             "optim.grad_accum=2",
             "gradient_checkpointing=true",
             f"seed={args.seed}",
+            *args.override,
         ],
         output_dir=os.path.join(OUT, name),
     )

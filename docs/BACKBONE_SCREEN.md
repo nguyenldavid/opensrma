@@ -70,3 +70,27 @@ Per-review holdout AUC of `logit_final` (fold 0, 242 holdout reviews,
 segments before the rule was finalised; the queue had provisionally
 applied the rule with one DeBERTa seed, and the result did not change.
 Raw rows: `runs/screen/results.jsonl` (not committed; data artefact).
+
+## Addendum A (2026-10-31, committed before these arms run)
+
+Two further candidates are screened under the same procedure and rule,
+and the rule is then re-applied to all candidates:
+
+* `bioclinical_modernbert_large_512`: BioClinical-ModernBERT-large
+  (`thomas-sounack/BioClinical-ModernBERT-large`, ModernBERT-large with
+  continued pretraining on PubMed and clinical text, 8,192-token context)
+  at 512 tokens with the default budgets, i.e. like the BERT candidates.
+* `bioclinical_modernbert_large`: the same model at 1024 tokens with the
+  long-context budgets (title 64, objective 128, criteria 448, 64 per
+  criterion, up to 16 criteria). Same global batch 32 (8 x 4 with gradient
+  checkpointing to fit 12 GB).
+
+Why: the three selected members are all limited to 512 tokens, and on
+TITAN-SR reviews the 512-token layout keeps a median 72% of the criteria
+and 87% of the abstract (training data, measured 2026-10-31). A
+biomedical long-context encoder is the state-of-the-art way to remove that
+limit; the general-domain ModernBERT-large already failed the screen.
+
+The two configurations count as separate candidates. `titan_open` may
+contain at most one of them (the higher mean AUC), so the ensemble keeps
+three different backbones.
