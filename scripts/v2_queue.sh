@@ -17,7 +17,9 @@ LARGE=(--override optim.batch_size_per_gpu=16 --override optim.grad_accum=2
        --override gradient_checkpointing=true)
 
 echo "=== $(date +%T) waiting for the screen and the pilot_v2 data"
-while pgrep -f "backbone_screen.sh" > /dev/null; do sleep 60; done
+while pgrep -f "^bash scripts/backbone_screen.sh" > /dev/null; do
+  sleep 60
+done
 until [[ -f "$OSB_DATA_ROOT/frozen/titan_test/manifest.json" ]]; do
   sleep 60
 done
@@ -34,6 +36,9 @@ means = {b: sum(v) / len(v) for b, v in by.items()}
 best = max(means.values())
 ranked = sorted(means, key=means.get, reverse=True)
 passing = [b for b in ranked if means[b] >= best - 0.05]
+# Addendum A: at most one BioClinical-ModernBERT configuration.
+bioclinical = [b for b in passing if b.startswith("bioclinical_modernbert")]
+passing = [b for b in passing if b not in bioclinical[1:]]
 print("DECISION screen means:", {b: round(means[b], 4) for b in ranked},
       "seeds:", {b: len(by[b]) for b in ranked})
 print("DECISION titan_open:", " ".join(passing[:3]))
