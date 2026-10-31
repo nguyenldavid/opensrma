@@ -31,6 +31,8 @@ train = [
   "tokenizers>=0.19",
   "safetensors>=0.4",
   "sentencepiece>=0.2",  # DeBERTa-v3 tokenizer.
+  # transformers 5.x converts the DeBERTa-v3 spm file through tiktoken.
+  "tiktoken>=0.7",
   "accelerate>=0.30",
 ]
 # Decoder rerankers (Qwen3-Reranker) are fine-tuned with LoRA.
