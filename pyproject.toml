@@ -39,10 +39,12 @@ train = [
 lora = ["peft>=0.13"]
 # Async LLM sweep (OpenRouter / vLLM OpenAI-compatible endpoints).
 llm = ["httpx>=0.27"]
+# Experiment tracking (scripts/wandb_sync.py sidecar).
+tracking = ["wandb>=0.19"]
 # SWIFT (Howard et al. 2016) is distributed as .xlsx.
 xlsx = ["openpyxl>=3.1"]
 dev = ["pytest>=8", "pylint>=3", "pyink>=24", "isort>=5"]
-all = ["opensrbench[train,lora,llm,xlsx,dev]"]
+all = ["opensrbench[train,lora,llm,xlsx,dev,tracking]"]
 
 [project.scripts]
 osb = "opensrbench.cli:main"
