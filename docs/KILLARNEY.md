@@ -37,7 +37,7 @@ pilot, not the protocol run.
 ssh killarney.alliancecan.ca
 cd /project/<group>   # or $HOME
 git clone https://github.com/nguyenldavid/opensrma && cd opensrma
-git checkout claude/practical-lovelace-7oe49s
+git checkout claude/killarney-prep
 ```
 
 Edit the site settings at the top of `slurm/env.sh` (`OSB_ACCOUNT=aip-<pi>`,

@@ -3,7 +3,11 @@
 Written 2026-10-31 for the agent operating on Killarney. Read
 [CLAUDE.md](../CLAUDE.md), [KILLARNEY.md](KILLARNEY.md) (setup, quick start)
 and [EXPERIMENT_IDEAS.md](EXPERIMENT_IDEAS.md) first. Branch:
-`claude/practical-lovelace-7oe49s`.
+`claude/killarney-prep`. Do **not** use `main`: it holds a separate
+session's commit (`5cc0695`: hardware profiles, internal_test holdout,
+unblinding ledger, RCT classifier) that has not been reconciled with this
+branch (both add protocol amendments numbered from A19). This branch
+supersedes it until the two are merged deliberately.
 
 ## Rules that override everything below
 
