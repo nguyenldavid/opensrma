@@ -86,6 +86,21 @@ class EuropePmcClient:
         os.replace(tmp, path)
         return content
 
+    def _get_json(
+        self, url: str, params: dict, attempts: int = 3
+    ) -> dict | None:
+        """GETs a JSON reply; None if the body stays empty or malformed.
+
+        Europe PMC occasionally answers 200 with an empty body.
+        """
+        for _ in range(attempts):
+            response = self._session.get(url, params=params)
+            try:
+                return response.json()
+            except ValueError:
+                continue
+        return None
+
     def references(self, pmcid: str, page_size: int = 1000) -> list[dict]:
         """Returns Europe PMC's resolved reference list for an article.
 
@@ -96,14 +111,22 @@ class EuropePmcClient:
         out: list[dict] = []
         page = 1
         while True:
-            payload = self._session.get(
+            payload = self._get_json(
                 BASE_URL + f"PMC/{pmcid}/references",
                 params={
                     "format": "json",
                     "pageSize": str(page_size),
                     "page": str(page),
                 },
-            ).json()
+            )
+            if payload is None:
+                logging.warning(
+                    "Europe PMC references for %s: unreadable reply; using"
+                    " %d references fetched so far",
+                    pmcid,
+                    len(out),
+                )
+                return out
             refs = payload.get("referenceList", {}).get("reference", [])
             out.extend(refs)
             if len(refs) < page_size:
