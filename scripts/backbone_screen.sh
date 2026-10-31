@@ -6,6 +6,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source .venv/bin/activate
 export TOKENIZERS_PARALLELISM=false HF_HUB_OFFLINE=1
+# Long DeBERTa batches fragment the 12 GB card; seed 1234 hit OOM without.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 mkdir -p runs/screen
 
 for seed in 1234 1235; do
