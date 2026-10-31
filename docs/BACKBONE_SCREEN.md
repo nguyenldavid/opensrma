@@ -51,3 +51,22 @@ The screen is short (about 0.2 passes over the training data), so it
 measures how well each backbone starts and adapts, not where it would
 converge. That is the question the rule answers: whether a member is
 worth its share of the Killarney budget.
+
+## Outcome (2026-10-31)
+
+Per-review holdout AUC of `logit_final` (fold 0, 242 holdout reviews,
+1,500 steps, global batch 32):
+
+| Backbone | Seed 1234 | Seed 1235 | Mean | Passes (>= best - 0.05) |
+|---|---|---|---|---|
+| biolinkbert_large | 0.8618 | 0.8583 | **0.8600** | yes (best) |
+| biomedbert_large | 0.8592 | 0.8467 | 0.8529 | yes |
+| deberta_v3_large | 0.8410 | 0.8472 | 0.8441 | yes |
+| modernbert_large | 0.7489 | 0.7571 | 0.7530 | no (-0.107) |
+
+`titan_open` = biolinkbert_large, biomedbert_large, deberta_v3_large
+(`configs/titan_ensemble.yaml`; `titan_open_xl` likewise). DeBERTa seed
+1234 first ran out of GPU memory and was rerun with expandable CUDA
+segments before the rule was finalised; the queue had provisionally
+applied the rule with one DeBERTa seed, and the result did not change.
+Raw rows: `runs/screen/results.jsonl` (not committed; data artefact).

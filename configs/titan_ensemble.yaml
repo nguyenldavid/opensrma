@@ -156,10 +156,12 @@ backbones:
     num_workers: 0
 
 ensembles:
-  # Protocol ensemble: 3 diverse encoders x 5 folds.
-  titan_open: [modernbert_large, biolinkbert_large, deberta_v3_large]
+  # Protocol ensemble: 3 encoders x 5 folds. Members chosen by the
+  # pre-registered backbone screen (docs/BACKBONE_SCREEN.md, 2026-10-31):
+  # modernbert_large was dropped (holdout AUC 0.753 vs 0.860 for the best).
+  titan_open: [biolinkbert_large, biomedbert_large, deberta_v3_large]
   # Adds the LoRA decoder reranker (needs H100s).
-  titan_open_xl: [modernbert_large, biolinkbert_large, deberta_v3_large,
+  titan_open_xl: [biolinkbert_large, biomedbert_large, deberta_v3_large,
                   qwen3_reranker_4b]
   # TITAN-SR two-model 50/50 baseline (their reproducible variant).
   titan_sr_baseline: [titan_sr_pubmedbert, titan_sr_biolinkbert]
