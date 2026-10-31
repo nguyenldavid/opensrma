@@ -1,6 +1,7 @@
 """Tests for the E-utilities client."""
 
 import json
+import re
 
 import requests
 
@@ -128,3 +129,35 @@ def test_esearch_tolerates_control_characters():
     )
     _, pmids = client.esearch("10.1000/x\ty[doi]", max_results=5)
     assert pmids == ["123"]
+
+
+class _RejectingEfetchSession:
+    """Answers 400 whenever the batch contains PMID "bad"."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def post(self, url: str, data: dict) -> _Response:
+        del url
+        self.calls += 1
+        ids = data["id"].split(",")
+        if "bad" in ids:
+            _Response(400, {}).raise_for_status()
+        response = _Response(200, {})
+        response.content = "".join(f"<id>{i}</id>" for i in ids).encode()
+        return response
+
+
+def test_efetch_skips_only_the_rejected_pmid(monkeypatch):
+    monkeypatch.setattr(
+        eutils.parse,
+        "parse_efetch_xml",
+        lambda xml: [
+            {"pmid": p} for p in re.findall(r"<id>(\w+)</id>", xml.decode())
+        ],
+    )
+    client = eutils.EUtilsClient(
+        email="x@example.org", session=_RejectingEfetchSession()
+    )
+    batches = list(client.efetch(["1", "2", "bad", "4"], batch_size=4))
+    assert [r["pmid"] for r in batches[0]] == ["1", "2", "4"]

@@ -145,14 +145,36 @@ class EUtilsClient:
         """
         pmids = list(dict.fromkeys(p for p in pmids if p))
         for start in range(0, len(pmids), batch_size):
-            batch = pmids[start : start + batch_size]
+            yield self._efetch_batch(pmids[start : start + batch_size])
+
+    def _efetch_batch(self, batch: list[str], retry: bool = True) -> list:
+        """EFetches one batch; a 400 is retried once, then bisected.
+
+        EFetch answers 400 both transiently and for a batch holding an id it
+        rejects, so a failing batch is split until the bad id is isolated and
+        skipped (logged) instead of aborting the whole stage.
+        """
+        try:
             response = self._session.post(
                 BASE_URL + "efetch.fcgi",
                 data=self._params(
                     db="pubmed", id=",".join(batch), retmode="xml"
                 ),
             )
-            yield parse.parse_efetch_xml(response.content)
+        except requests.HTTPError as error:
+            status = getattr(error.response, "status_code", None)
+            if status != 400:
+                raise
+            if retry:
+                return self._efetch_batch(batch, retry=False)
+            if len(batch) == 1:
+                logging.warning("EFetch rejects PMID %s; skipped", batch[0])
+                return []
+            middle = len(batch) // 2
+            return self._efetch_batch(batch[:middle]) + self._efetch_batch(
+                batch[middle:]
+            )
+        return parse.parse_efetch_xml(response.content)
 
     def doi_to_pmid(
         self, dois: Iterable[str], batch_size: int = 50
