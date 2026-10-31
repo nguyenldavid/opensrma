@@ -1,0 +1,11 @@
+# LOCAL: protocol data stages on this workstation (data root on /mnt/FNX).
+# Only the network settings differ from the protocol; no API key, so the
+# client clamps NCBI to 3 req/s. Used for download, ingest and enrich only
+# (pools/augmentation need days without a key and are left to Killarney).
+
+extends: ../benchmark_v1.yaml
+
+network:
+  # LOCAL: 500 / 3 (protocol: 200 / 1); throughput only, same rate limit.
+  efetch_batch_size: 500
+  efetch_workers: 3
