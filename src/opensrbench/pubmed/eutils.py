@@ -5,6 +5,7 @@ email; an API key raises the limit from 3 to 10 requests per second.
 """
 
 import datetime
+import json
 import logging
 from typing import Iterable, Iterator
 
@@ -17,6 +18,15 @@ from opensrbench.utils import http
 BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/"
 ESEARCH_HARD_CAP = 9999  # PubMed returns at most 10,000 ids per query.
 IDCONV_URL = "https://pmc.ncbi.nlm.nih.gov/tools/idconv/api/v1/articles/"
+
+
+def _json(response: requests.Response) -> dict:
+    """Parses a JSON reply that may echo raw control characters.
+
+    ESearch copies the query (e.g. a DOI with a stray tab) into
+    querytranslation verbatim, which strict JSON parsing rejects.
+    """
+    return json.loads(response.text, strict=False)
 
 
 class EUtilsClient:
@@ -97,7 +107,7 @@ class EUtilsClient:
                     sort=sort,
                 ),
             )
-            result = response.json().get("esearchresult", {})
+            result = _json(response).get("esearchresult", {})
             if "ERROR" in result:
                 logging.warning(
                     "ESearch error for %r: %s", term[:120], result["ERROR"]
@@ -118,7 +128,7 @@ class EUtilsClient:
                 db="pubmed", term=term, retmode="json", rettype="count"
             ),
         )
-        return int(response.json().get("esearchresult", {}).get("count", 0))
+        return int(_json(response).get("esearchresult", {}).get("count", 0))
 
     def efetch(
         self, pmids: Iterable[str], batch_size: int = 200
@@ -229,7 +239,7 @@ class EUtilsClient:
             BASE_URL + "esummary.fcgi",
             data=self._params(db="pmc", id=",".join(uids), retmode="json"),
         )
-        result = response.json().get("result", {})
+        result = _json(response).get("result", {})
         mapping = {}
         for uid in result.get("uids", []):
             ids = {

@@ -1,5 +1,7 @@
 """Tests for the E-utilities client."""
 
+import json
+
 import requests
 
 from opensrbench.pubmed import eutils
@@ -17,6 +19,10 @@ class _Response:
 
     def json(self) -> dict:
         return self._payload
+
+    @property
+    def text(self) -> str:
+        return json.dumps(self._payload)
 
     def raise_for_status(self) -> None:
         if self.status_code >= 400:
@@ -92,3 +98,33 @@ def test_session_retries_truncated_body(monkeypatch):
 
     monkeypatch.setattr(session._session, "request", fake_request)
     assert session.get("https://example.org").status_code == 200
+
+
+class _TextResponse(_Response):
+
+    def __init__(self, text: str):
+        super().__init__(200, {})
+        self._text = text
+
+    @property
+    def text(self) -> str:
+        return self._text
+
+
+class _EsearchSession:
+    """Echoes a raw tab in querytranslation, as ESearch does for some DOIs."""
+
+    def post(self, url: str, data: dict) -> _TextResponse:
+        del url, data
+        return _TextResponse(
+            '{"esearchresult": {"count": "1", "idlist": ["123"],'
+            ' "querytranslation": "10.1000/x\ty[doi]"}}'
+        )
+
+
+def test_esearch_tolerates_control_characters():
+    client = eutils.EUtilsClient(
+        email="x@example.org", session=_EsearchSession()
+    )
+    _, pmids = client.esearch("10.1000/x\ty[doi]", max_results=5)
+    assert pmids == ["123"]

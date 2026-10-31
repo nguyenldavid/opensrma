@@ -24,15 +24,17 @@ link_cache() {  # $1 = data root
   [[ -e "$1/cache" ]] || ln -s "$FNX/shared_cache" "$1/cache"
 }
 
-echo "=== $(date +%T) pilot_v2"
 V2="$FNX/data_pilot_v2"
-link_cache "$V2"
-[[ -e "$V2/raw" ]] || cp -a datasets/raw "$V2/raw"
-P=(--config configs/killarney/benchmark_pilot.yaml
-   --datasets-config configs/killarney/datasets_pilot.yaml)
-OSB_DATA_ROOT="$V2" osb data "${P[@]}" --stages ingest,enrich
-OSB_DATA_ROOT="$V2" osb data "${P[@]}" --stages build,split,freeze \
-  --device cpu
+if [[ ! -f "$V2/frozen/titan_test/manifest.json" ]]; then
+  echo "=== $(date +%T) pilot_v2"
+  link_cache "$V2"
+  [[ -e "$V2/raw" ]] || cp -a datasets/raw "$V2/raw"
+  P=(--config configs/killarney/benchmark_pilot.yaml
+     --datasets-config configs/killarney/datasets_pilot.yaml)
+  OSB_DATA_ROOT="$V2" osb data "${P[@]}" --stages ingest,enrich
+  OSB_DATA_ROOT="$V2" osb data "${P[@]}" --stages build,split,freeze \
+    --device cpu
+fi
 
 echo "=== $(date +%T) protocol (download, ingest, enrich)"
 PR="$FNX/data_protocol"
