@@ -5,7 +5,8 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 : "${NTFY_TOPIC:?set NTFY_TOPIC}"
-LOGS=(logs/screen.log logs/screen2.log logs/overnight_data.log logs/v2_queue.log)
+LOGS=(logs/screen.log logs/screen2.log logs/overnight_data.log logs/v2_queue.log
+      logs/biencoder_probe.log)
 touch "${LOGS[@]}"
 
 send() {  # $1 = title, $2 = message
