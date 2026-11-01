@@ -58,4 +58,23 @@ combiner), for `titan_open` only. `titan_sr_baseline` stays
 
 ## Outcome
 
-(pending: applied when DeBERTa-v3-large finishes)
+Applied 2026-11-01 15:10, after DeBERTa-v3-large finished (all three
+members: BioLinkBERT-large, BiomedBERT-large, DeBERTa-v3-large; DeBERTa
+trained EMA-off locally, see `scripts/v2_queue.sh`). Log:
+`logs/val_diagnostics_3m.log`, results `<FNX>/val_diagnostics/results.json`.
+
+| Combiner (3 members) | holdout-locked `equal_review_lcb` @ 0.99: val sens / spec | val reviews below 0.99 | val AUC (per review) |
+|---|---|---|---|
+| mean_sigmoid | **0.9870** / 0.376 | 21 | 0.884 |
+| stacking | 0.9959 / 0.306 | 10 | 0.878 |
+| TITAN-SR baseline (mean_sigmoid) | 0.9948 / 0.267 | 10 | 0.861 |
+
+`mean_sigmoid` beats `stacking` on specificity by 0.070, but its val
+sensitivity at the locked threshold is 0.987, below the required 0.99.
+Clause 1 is not met, so **`stacking` is kept**: `combiners.titan_open`
+stays `stacking`, no amendment A22, no config change. K1 runs as
+configured.
+
+For the record (not part of the decision): TITAN-Open (stacking) vs the
+TITAN-SR baseline on val, paired family bootstrap: per-review AUC +0.016
+[0.005, 0.028], spec at matched 99% recall +0.030 [0.010, 0.052].
