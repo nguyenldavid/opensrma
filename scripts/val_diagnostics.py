@@ -15,6 +15,10 @@
   V6  Review-adaptive thresholds: the global threshold is applied to the
       ensemble score re-centred on statistics of the review's own
       (unlabelled) candidate scores; locked on the holdout, applied to val.
+  V7  The protocol's TITAN-Open combiner (cross-fitted logistic stacker
+      on within-review features, configs/benchmark_v1.yaml settings): fit
+      and threshold-locked on the holdout exactly as `osb calibrate` does on
+      val, refit model applied to val.
   V5  Publication-type coverage per source and how much the PubMed cache
       could backfill (idea R5).
 
@@ -35,6 +39,7 @@ from transformers import AutoTokenizer
 
 sys.path.insert(0, os.path.dirname(__file__))
 from design_cue_scan import _review_flags  # pylint: disable=wrong-import-position
+from opensrbench.calibration import stacking
 from opensrbench.calibration import thresholds
 from opensrbench.evaluation import ranking
 
@@ -397,6 +402,59 @@ def v6(val, hold, members, fam_of) -> dict:
     return res
 
 
+def _both_heads(runs_root, members, file, tag) -> pd.DataFrame:
+    wide = None
+    for b in members:
+        p = pd.read_parquet(f"{runs_root}/{b}/fold0/{file}")
+        if "set" in p:
+            p = p[p["set"] == "val"]
+        p = p.rename(
+            columns={"logit_final": f"{b}__final", "logit_abs": f"{b}__abs"}
+        )[KEYS + ["label_final", f"{b}__final", f"{b}__abs"]]
+        p[f"{b}__fold_std"] = 0.0
+        wide = (
+            p
+            if wide is None
+            else wide.merge(p.drop(columns="label_final"), on=KEYS)
+        )
+    wide["set"] = tag
+    return wide
+
+
+def v7(runs_root, members, fam_of, c=1.0, positive_weight=5.0, folds=5):
+    """Stacker fit + thresholds on the holdout (OOF), applied to val."""
+    hold = _both_heads(runs_root, members, "holdout_preds.parquet", "hold")
+    val = _both_heads(runs_root, members, "preds.parquet", "val")
+    df, feats = stacking.build_features(
+        pd.concat([hold, val], ignore_index=True), members
+    )
+    is_h = (df["set"] == "hold").to_numpy()
+    fam = df["review_id"].map(fam_of).to_numpy()
+    oof, model = stacking.fit_cross_fitted(
+        df[is_h], feats, fam[is_h], folds, c, positive_weight
+    )
+    df["score"] = 0.0
+    df.loc[is_h, "score"] = oof
+    df.loc[~is_h, "score"] = model.predict_proba(
+        df.loc[~is_h, feats].to_numpy(np.float64)
+    )[:, 1]
+    h, v = df[is_h].reset_index(drop=True), df[~is_h].reset_index(drop=True)
+    out = {"deployable": deployable(v, h, "score", fam_of)}
+    p = ranking.per_review_ranking(v, "score").set_index("review_id")
+    out["oracle"] = {k: float(p[k].dropna().mean()) for k in p.columns}
+    for t in (0.99, 0.995):
+        tau = thresholds.equal_review(
+            v["score"].to_numpy(), v["label_final"].to_numpy(),
+            v["review_id"].to_numpy(), t,
+        )
+        m = per_review_at(v, "score", tau)
+        out[f"matched_sens_{t}"] = {
+            "sens": float(m["sens"].mean()),
+            "spec": float(m["spec"].mean()),
+        }
+    return out, p
+
+
 def v5(data_root: str) -> dict:
     recs = pd.read_parquet(
         f"{data_root}/processed/records.parquet",
@@ -478,6 +536,19 @@ def main() -> None:
         members = [b for b in (OPEN if name == "titan_open" else SR) if b in have]
         result[f"V6:{name}"] = v6(val, hold, members, fam_of)
     print("V6 done", flush=True)
+    v7_per = {}
+    for name in ("titan_open", "titan_sr"):
+        members = [b for b in (OPEN if name == "titan_open" else SR) if b in have]
+        result[f"V7:{name}:stacking"], v7_per[name] = v7(
+            args.runs_root, members, fam_of
+        )
+    result["V7:paired_open_stacking_minus_sr_mean_sigmoid"] = {
+        m: paired_bootstrap(
+            per["titan_sr:mean_sigmoid"][m], v7_per["titan_open"][m], fam_of
+        )
+        for m in ("auc", "spec_at_99_recall")
+    }
+    print("V7 done", flush=True)
     result["V5"] = v5(args.data_root)
     with open(f"{args.out}/results.json", "w") as fh:
         json.dump(result, fh, indent=1, default=float)

@@ -94,6 +94,11 @@ The one titan_test evaluation of this round.
   the certain members first (titan_sr x2, biolinkbert_large,
   biomedbert_large) with `OPEN_MEMBERS`, and the third member once decided;
   `--finalize` must only run when all members exist.
+* **Combiner:** [COMBINER_SCREEN.md](COMBINER_SCREEN.md) decides
+  `combiners.titan_open` (stacking vs mean_sigmoid) from the local
+  holdout -> val dry run once the local DeBERTa member finishes
+  (~19:00 on 2026-11-01). `git pull` and read its Outcome before
+  `--finalize`; training and prediction do not depend on it.
 * `bash slurm/pilot_l40s.sh --dry-run`, then the real run. Thresholds:
   `equal_review_lcb` (primary) + `pooled_conformal` (secondary), locked on
   val, committed by `preregister.sh` before evaluate.
