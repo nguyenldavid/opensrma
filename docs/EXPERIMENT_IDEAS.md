@@ -25,7 +25,7 @@ there.
 | I2 | **Section-aware abstract budget**: use PubMed structured-abstract labels; drop BACKGROUND first, keep METHODS / PARTICIPANTS | idea | cheap, low risk; ablation in the screen setup (~1 h per arm on the 3080 Ti) |
 | I3 | **Per-criterion scoring**: one `[CLS] criterion [SEP] title + abstract` pass per criterion, soft-min over passes | idea | full abstract for every criterion; ~11x compute on TITAN-SR reviews |
 | I4 | **Long-context members**: Qwen3-Reranker-4B at 2-4k tokens (titan_open_xl, H100) | idea | removes truncation entirely |
-| I5 | **BioClinical-ModernBERT-large** (8k context, PubMed + clinical pretraining) | running | screen addendum A (512 and 1024 tokens) |
+| I5 | **BioClinical-ModernBERT-large** (8k context, PubMed + clinical pretraining) | done: **failed** | screen addendum A: holdout AUC 0.775 at 1024 tokens, 0.764 at 512 vs 0.860 (BioLinkBERT-large); long context +0.011 |
 | I6 | DeBERTa-v3-large at 1024 tokens (relative positions only) | idea | cheap screen arm |
 
 ## Design-based exclusion rules ("stage 0") and training-set refinement
@@ -50,7 +50,7 @@ conditioned on what each review allows.
 
 | # | Idea | Status | Notes |
 |---|---|---|---|
-| B1 | **Per-criterion bi-encoder veto**: embed each criterion (MedCPT query encoder) and each abstract sentence (MedCPT article encoder) on CPU; per criterion take the best-matching sentence; a record is ruled out only if some criterion has no sentence above a recall-calibrated threshold | running | CPU probe on pilot_v2 val; see results below once done |
+| B1 | **Per-criterion bi-encoder veto**: embed each criterion (MedCPT query encoder) and each abstract sentence (MedCPT article encoder) on CPU; per criterion take the best-matching sentence; a record is ruled out only if some criterion has no sentence above a recall-calibrated threshold | done: **negative** (regex criteria) | pilot_v2 val, threshold fit on 250 train reviews at 99.5% pooled recall: per-review AUC 0.60-0.71 (cross-encoders ~0.86); at 99.5-99.8% equal-review sensitivity only 1.6-5.1% of negatives ruled out (best: objective vs whole document, MedCPT). NeuML/pubmedbert-base-embeddings slightly worse than MedCPT. B2 (LLM PICO items) remains the real test |
 | B2 | B1 with LLM-structured PICO items (I1) instead of regex fragments | idea | the PICO-decomposition version of B1 |
 | B3 | Bi-encoder scores as stacker features or as a cheap stage-0 high-recall filter before the cross-encoders | idea | |
 
@@ -63,4 +63,5 @@ conditioned on what each review allows.
 | C3 | Family graph: minimum number of shared included studies for overlap edges and a recalibrated MedCPT cosine threshold (largest family still 7,252 of 16,993 reviews on pilot_v2) | idea | changes leakage protection: PI decision + amendment |
 | C4 | Matched-sensitivity secondary comparison (specificity where both systems reach equal-review sensitivity 0.99 / 0.995) | idea | removes the threshold under-coverage confound |
 | C5 | gpt-oss-20b verifier cascade on the gray zone | idea | Killarney (H100) |
+| T1 | BioLinkBERT-large on pilot_v2 for 3 epochs: holdout AUC 0.859 / 0.860 / 0.857 (spec@99 0.65): flat after epoch 0 and equal to the 1,500-step screen; more steps are not the bottleneck | done | points to input representation (I1-I4) |
 | C6 | EMA warm-up (or EMA off) for short runs; log encoder LR and denser loss | idea | small recipe fixes |
