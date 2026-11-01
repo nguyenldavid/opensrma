@@ -157,7 +157,7 @@ def score_reviews(reviews, records, q_enc, a_enc, cache):
             lambda s: (s - s.mean()) / (s.std() + 1e-6)
         )
     out = records[
-        ["review_id", "label_final"]
+        ["review_id", "record_id", "label_final"]
         + [c for c in records if c.endswith(("_doc", "_sent", "_z"))]
     ]
     out.to_parquet(cache)
@@ -171,6 +171,11 @@ def main():
     parser.add_argument("--train-reviews", type=int, default=250)
     parser.add_argument("--threads", type=int, default=16)
     parser.add_argument(
+        "--holdout-preds",
+        help="holdout_preds.parquet of a training run: also score its "
+        "(train-fold holdout) reviews, for stacking experiments.",
+    )
+    parser.add_argument(
         "--encoder", choices=("medcpt", "neuml"), default="medcpt"
     )
     args = parser.parse_args()
@@ -183,15 +188,18 @@ def main():
         columns=["review_id", "objective", "criteria_list"],
     ).set_index("review_id")
     val_ids = set(splits.loc[splits.split == "val", "review_id"])
-    train_ids = (
+    train_ids = set(
         splits.loc[splits.split == "train", "review_id"]
         .drop_duplicates()
         .sample(args.train_reviews, random_state=0)
     )
-    keep = val_ids | set(train_ids)
+    holdout_ids = set()
+    if args.holdout_preds:
+        holdout_ids = set(pd.read_parquet(args.holdout_preds)["review_id"])
+    keep = val_ids | train_ids | holdout_ids
     records = pd.read_parquet(
         f"{args.data_root}/processed/records.parquet",
-        columns=["review_id", "title", "abstract", "label_final"],
+        columns=["review_id", "record_id", "title", "abstract", "label_final"],
         filters=[("review_id", "in", list(keep))],
     )
     if args.encoder == "medcpt":
@@ -203,7 +211,10 @@ def main():
         a_enc = _NeumlDocs(q_enc)
     results = {}
     frames = {}
-    for name, ids in (("train", set(train_ids)), ("val", val_ids)):
+    sets = [("train", train_ids), ("val", val_ids), ("holdout", holdout_ids)]
+    for name, ids in sets:
+        if not ids:
+            continue
         recs = records[records.review_id.isin(ids)].reset_index(drop=True)
         frames[name] = score_reviews(
             reviews.loc[sorted(ids & set(recs.review_id))],
@@ -213,6 +224,8 @@ def main():
             f"{args.out}/{name}_scores.parquet",
         )
         print(name, len(recs), "records scored", flush=True)
+    if "train" not in frames:
+        return
     for col in ("obj_doc_z", "min_doc_z", "min_sent_z", "mean_sent_z"):
         tr, va = frames["train"], frames["val"]
         pos = np.sort(tr.loc[tr.label_final == 1, col].to_numpy())
