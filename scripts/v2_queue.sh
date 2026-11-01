@@ -8,6 +8,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source .venv/bin/activate
 export TOKENIZERS_PARALLELISM=false HF_HUB_OFFLINE=1
+# Large encoders sit close to 12 GB; avoid fragmentation OOMs.
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 FNX="${FNX_ROOT:-/mnt/FNX/dav_Projects_2026/opensrma}"
 export OSB_DATA_ROOT="$FNX/data_pilot_v2" OSB_RUNS_ROOT="$FNX/runs_v2"
 CFG=(--config configs/killarney/benchmark_pilot.yaml
@@ -62,5 +64,13 @@ run() {  # $1 = backbone, rest = extra train args
 }
 
 for b in titan_sr_pubmedbert titan_sr_biolinkbert; do run "$b"; done
-for b in $OPEN; do run "$b" "${LARGE[@]}"; done
+for b in $OPEN; do
+  case "$b" in  # same global batch (32) in smaller micro-batches
+    # DeBERTa-v3-large does not fit 12 GB with the fp32 EMA shadow (1.7 GB):
+    # train it as screened (EMA off), local deviation only (L40S keeps EMA).
+    deberta*) run "$b" "${LARGE[@]}" --override optim.batch_size_per_gpu=8 \
+                --override optim.grad_accum=4 --override optim.ema_decay=0 ;;
+    *) run "$b" "${LARGE[@]}" ;;
+  esac
+done
 echo "DONE $(date +%T) v2 queue finished; members: titan_sr x2 + $OPEN"

@@ -65,5 +65,11 @@ conditioned on what each review allows.
 | C3 | Family graph: minimum number of shared included studies for overlap edges and a recalibrated MedCPT cosine threshold (largest family still 7,252 of 16,993 reviews on pilot_v2) | idea | changes leakage protection: PI decision + amendment |
 | C4 | Matched-sensitivity secondary comparison (specificity where both systems reach equal-review sensitivity 0.99 / 0.995) | idea | removes the threshold under-coverage confound |
 | C5 | gpt-oss-20b verifier cascade on the gray zone | idea | Killarney (H100) |
-| T1 | BioLinkBERT-large on pilot_v2 for 3 epochs: holdout AUC 0.859 / 0.860 / 0.857 (spec@99 0.65): flat after epoch 0 and equal to the 1,500-step screen; more steps are not the bottleneck | done | points to input representation (I1-I4) |
+| T1 | BioLinkBERT-large on pilot_v2 for 3 epochs: holdout AUC 0.859 / 0.860 / 0.857 (spec@99 0.65); BiomedBERT-large 0.857 / 0.858 / 0.857 (spec@99 0.652): flat after epoch 0 and equal to the 1,500-step screen; more steps are not the bottleneck | done | points to input representation (I1-I4) |
 | C6 | EMA warm-up (or EMA off) for short runs; log encoder LR and denser loss | idea | small recipe fixes |
+
+## Data
+
+| # | Idea | Status | Notes |
+|---|---|---|---|
+| D1 | **Full-pool training data**: add the legacy benchmarks (CLEF TAR, SYNERGY, SWIFT, Cohen, SAS) to training | idea (data built) | `data_legacy` (2026-11-01, build/split/freeze in 10 min on CPU): 17,052 reviews after build (19,939 after dedupe), largest family 7,327 (pilot_v2 7,252: the giant family barely grows). Train gains only 75 reviews but +468k records (CLEF 242k, SYNERGY 124k, SWIFT 94k) at ~1.8% prevalence, i.e. real full screening pools, vs. pilot_v2 train 247k records at 31% prevalence. 4 CLEF reviews enter val; titan_test keeps 3,635 reviews but 24 CLEF reviews replace 24 Chan reviews, so it is **not** the pilot_v2 titan_test (Killarney K1 stays on pilot_v2). Test: one screen arm trained on legacy train vs pilot_v2 train, scored on the val reviews common to both; the sampler's negatives-per-review cap decides how much of the pool is used |
