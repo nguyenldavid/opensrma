@@ -1,0 +1,6 @@
+# LOCAL: offline stages on the legacy datasets (see datasets_fnx_legacy).
+extends: benchmark_fnx_protocol.yaml
+
+cohort:
+  # LOCAL: false (protocol: true); pool augmentation needs the pools stage.
+  augment_incomplete_pools: false

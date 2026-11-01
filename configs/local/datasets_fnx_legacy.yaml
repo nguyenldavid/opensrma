@@ -1,0 +1,8 @@
+# LOCAL: every protocol dataset except the Europe PMC harvest (its
+# negatives come from the pools stage, not run locally). Used to measure the
+# family graph and split sizes at full legacy scale.
+extends: ../datasets.yaml
+
+sources:
+  pmc_harvest:
+    enabled: false                 # LOCAL: off (protocol: true).
